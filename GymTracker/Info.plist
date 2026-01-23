@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSHealthShareUsageDescription</key>
+	<string>GymTracker needs access to read your workout history to show progression charts and sync with Apple Watch workouts.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>GymTracker needs access to save your workout sessions to Apple Health for tracking across your devices.</string>
+</dict>
+</plist>
