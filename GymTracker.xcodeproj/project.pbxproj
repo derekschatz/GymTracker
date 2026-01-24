@@ -153,6 +153,29 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		FF1874142F2478C2003680E7 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = iOS;
+			sourceTree = "<group>";
+		};
+		FF1874152F2478C2003680E7 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		FF1874162F2478C2003680E7 /* SourceFiles */ = {
+			isa = PBXGroup;
+			children = (
+				FF1874142F2478C2003680E7 /* iOS */,
+				FF1874152F2478C2003680E7 /* Shared */,
+			);
+			path = SourceFiles;
+			sourceTree = "<group>";
+		};
 		FF7A92A72F21CDBD00AB2377 = {
 			isa = PBXGroup;
 			children = (
@@ -161,7 +184,7 @@
 				FF7A92CA2F21CDC000AB2377 /* GymTrackerUITests */,
 				FF18738E2F22B654003680E7 /* GymTrackerWatch Watch App */,
 				FF7A92B12F21CDBD00AB2377 /* Products */,
-				FF7A93062F21D32F00AB2377 /* SourceFiles */,
+				FF1874162F2478C2003680E7 /* SourceFiles */,
 			);
 			sourceTree = "<group>";
 		};
@@ -176,29 +199,6 @@
 				FF1873A32F22B656003680E7 /* GymTrackerWatch Watch AppUITests.xctest */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		FF7A93042F21D32F00AB2377 /* iOS */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = iOS;
-			sourceTree = "<group>";
-		};
-		FF7A93052F21D32F00AB2377 /* Shared */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = Shared;
-			sourceTree = "<group>";
-		};
-		FF7A93062F21D32F00AB2377 /* SourceFiles */ = {
-			isa = PBXGroup;
-			children = (
-				FF7A93042F21D32F00AB2377 /* iOS */,
-				FF7A93052F21D32F00AB2377 /* Shared */,
-			);
-			path = SourceFiles;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */

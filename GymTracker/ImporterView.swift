@@ -13,87 +13,158 @@ struct ImporterView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Import Workout Plan")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                        Text("Paste your workout markdown or load a file")
+                    // Header
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Import Plan")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                        Text("Paste workout markdown or load an example")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    // Example button
-                    Button {
-                        markdownText = WorkoutParser.exampleWorkout()
-                        showExample = true
-                    } label: {
-                        Label("Load Example Workout", systemImage: "text.badge.plus")
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.blue.opacity(0.1))
+                    // Quick actions
+                    HStack(spacing: 12) {
+                        Button {
+                            markdownText = WorkoutParser.exampleWorkout()
+                            showExample = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "doc.text.fill")
+                                    .font(.system(size: 16))
+                                Text("Load Example")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                            }
                             .foregroundColor(.blue)
-                            .cornerRadius(12)
-                    }
-
-                    // Text editor
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Workout Markdown")
-                            .font(.headline)
-
-                        TextEditor(text: $markdownText)
-                            .frame(minHeight: 300)
-                            .padding(8)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(8)
-                            .font(.system(.body, design: .monospaced))
-                    }
-
-                    if let error = errorMessage {
-                        Text(error)
-                            .foregroundColor(.red)
-                            .font(.caption)
-                            .padding()
                             .frame(maxWidth: .infinity)
-                            .background(Color.red.opacity(0.1))
-                            .cornerRadius(8)
+                            .padding(.vertical, 14)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(12)
+                        }
+
+                        Button {
+                            markdownText = ""
+                            errorMessage = nil
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 16))
+                                Text("Clear")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                            }
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color(.systemGray5))
+                            .cornerRadius(12)
+                        }
+                    }
+
+                    // Text editor section
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Workout Markdown")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+
+                            Spacer()
+
+                            if !markdownText.isEmpty {
+                                Text("\(markdownText.components(separatedBy: .newlines).filter { !$0.isEmpty }.count) lines")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        ZStack(alignment: .topLeading) {
+                            if markdownText.isEmpty {
+                                Text("# Workout Name\n## Exercise 1\nSets: 3\nReps: 10\n\n## Exercise 2\nSets: 4\nReps: 8-12")
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.secondary.opacity(0.5))
+                                    .padding(12)
+                            }
+
+                            TextEditor(text: $markdownText)
+                                .font(.system(.body, design: .monospaced))
+                                .scrollContentBackground(.hidden)
+                                .padding(8)
+                        }
+                        .frame(minHeight: 240)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color(.systemGray4), lineWidth: 1)
+                        )
+                    }
+
+                    // Error message
+                    if let error = errorMessage {
+                        HStack(spacing: 10) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.red)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.red.opacity(0.1))
+                        .cornerRadius(10)
                     }
 
                     // Format guide
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Format Guide")
-                            .font(.headline)
+                    formatGuideSection
 
-                        VStack(alignment: .leading, spacing: 8) {
-                            FormatGuideRow(prefix: "#", description: "Workout name")
-                            FormatGuideRow(prefix: "##", description: "Exercise name")
-                            FormatGuideRow(prefix: "Sets:", description: "Number of sets")
-                            FormatGuideRow(prefix: "Reps:", description: "Target reps (e.g., 8-10)")
-                            FormatGuideRow(prefix: "Notes:", description: "Optional notes")
-                        }
-                        .padding()
-                        .background(Color(.systemGray6))
-                        .cornerRadius(8)
-                    }
-
-                    Spacer()
+                    Spacer(minLength: 40)
                 }
-                .padding()
+                .padding(20)
             }
+            .background(Color(.systemGroupedBackground))
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
                         isPresented = false
                     }
+                    .foregroundColor(.secondary)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Import") {
+                    Button {
                         importWorkout()
+                    } label: {
+                        Text("Import")
+                            .fontWeight(.semibold)
                     }
                     .disabled(markdownText.isEmpty)
-                    .fontWeight(.semibold)
                 }
             }
+        }
+    }
+
+    private var formatGuideSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "info.circle.fill")
+                    .foregroundColor(.blue)
+                Text("Format Guide")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+            }
+
+            VStack(spacing: 8) {
+                FormatGuideRow(prefix: "#", description: "Workout name", example: "# Push Day")
+                FormatGuideRow(prefix: "##", description: "Exercise name", example: "## Bench Press")
+                FormatGuideRow(prefix: "Sets:", description: "Number of sets", example: "Sets: 4")
+                FormatGuideRow(prefix: "Reps:", description: "Target reps", example: "Reps: 8-10")
+                FormatGuideRow(prefix: "Tempo:", description: "Tempo (optional)", example: "Tempo: 3-1-2")
+                FormatGuideRow(prefix: "Notes:", description: "Notes (optional)", example: "Notes: Pause at bottom")
+            }
+            .padding(14)
+            .background(Color(.secondarySystemGroupedBackground))
+            .cornerRadius(12)
         }
     }
 
@@ -103,11 +174,8 @@ struct ImporterView: View {
             dataManager.addPlans(plans)
             isPresented = false
         } catch {
-            // Show diagnostic info
             let lineCount = markdownText.components(separatedBy: .newlines).filter { !$0.isEmpty }.count
-            let charCount = markdownText.count
-            let firstChars = String(markdownText.prefix(100)).debugDescription
-            errorMessage = "Failed to parse workout.\nLines: \(lineCount), Chars: \(charCount)\nFirst 100 chars: \(firstChars)"
+            errorMessage = "Failed to parse workout. Check your format (\(lineCount) lines detected)."
         }
     }
 }
@@ -115,17 +183,25 @@ struct ImporterView: View {
 struct FormatGuideRow: View {
     let prefix: String
     let description: String
+    let example: String
 
     var body: some View {
         HStack(spacing: 12) {
             Text(prefix)
-                .font(.system(.caption, design: .monospaced))
-                .fontWeight(.bold)
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
                 .foregroundColor(.blue)
-                .frame(width: 60, alignment: .leading)
-            Text(description)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .frame(width: 50, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                Text(example)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
         }
     }
 }
