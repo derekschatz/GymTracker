@@ -589,13 +589,21 @@ struct SetRowView: View {
                     .textCase(.uppercase)
                 HStack(spacing: 4) {
                     TextField("0", text: Binding(
-                        get: { set.weight == 0 && !weightFocused ? "" : String(format: "%.0f", set.weight) },
+                        get: {
+                            if set.weight == 0 && !weightFocused { return "" }
+                            // Show decimals if present, otherwise show whole number
+                            if set.weight.truncatingRemainder(dividingBy: 1) == 0 {
+                                return String(format: "%.0f", set.weight)
+                            } else {
+                                return String(format: "%.1f", set.weight)
+                            }
+                        },
                         set: { set.weight = Double($0) ?? 0 }
                     ))
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.center)
                     .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .frame(width: 56)
+                    .frame(width: 64)
                     .padding(.vertical, 8)
                     .background(Color(.systemGray5))
                     .cornerRadius(8)
