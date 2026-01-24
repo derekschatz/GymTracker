@@ -11,6 +11,7 @@ struct ActiveWorkoutView: View {
     @State private var showTimer = false
     @State private var restTimeRemaining = 0
     @State private var timerActive = false
+    @State private var activeTimer: Timer?
     @State private var startTime = Date()
     @State private var showCancelAlert = false
     @State private var isRestoredWorkout = false
@@ -407,6 +408,9 @@ struct ActiveWorkoutView: View {
     }
 
     private func startRestTimer(seconds: Int, sendToWatch: Bool = true) {
+        // Invalidate any existing timer before creating a new one
+        activeTimer?.invalidate()
+
         restTimeRemaining = seconds
         timerActive = true
         showTimer = true
@@ -415,17 +419,20 @@ struct ActiveWorkoutView: View {
             watchManager.sendTimerToWatch(seconds: seconds)
         }
 
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
+        activeTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
             if restTimeRemaining > 0 && timerActive {
                 restTimeRemaining -= 1
             } else {
                 timer.invalidate()
+                activeTimer = nil
                 timerActive = false
             }
         }
     }
 
     private func stopRestTimer(sendToWatch: Bool = true) {
+        activeTimer?.invalidate()
+        activeTimer = nil
         timerActive = false
         restTimeRemaining = 0
 

@@ -1,5 +1,6 @@
 import Foundation
 import WatchConnectivity
+import WatchKit
 import Combine
 
 // Simplified models for watch
@@ -93,6 +94,7 @@ class WatchWorkoutManager: NSObject, ObservableObject {
     @Published var timerStopFromPhone: Bool = false
 
     private var session: WCSession?
+    private var extendedRuntimeSession: WKExtendedRuntimeSession?
 
     override init() {
         super.init()
@@ -226,6 +228,23 @@ class WatchWorkoutManager: NSObject, ObservableObject {
             print("Error sending timer stop: \(error)")
         }
     }
+
+    // MARK: - Extended Runtime Session
+    private func startExtendedSession() {
+        guard extendedRuntimeSession == nil else { return }
+
+        let session = WKExtendedRuntimeSession()
+        session.delegate = self
+        session.start()
+        extendedRuntimeSession = session
+        print("Extended runtime session started")
+    }
+
+    private func stopExtendedSession() {
+        extendedRuntimeSession?.invalidate()
+        extendedRuntimeSession = nil
+        print("Extended runtime session stopped")
+    }
 }
 
 extension WatchWorkoutManager: WCSessionDelegate {
@@ -267,6 +286,7 @@ extension WatchWorkoutManager: WCSessionDelegate {
                     do {
                         let workout = try JSONDecoder().decode(WatchWorkout.self, from: workoutData)
                         activeWorkout = workout
+                        startExtendedSession()
                     } catch {
                         print("Failed to decode workout: \(error)")
                     }
@@ -322,9 +342,37 @@ extension WatchWorkoutManager: WCSessionDelegate {
             case "endWorkout":
                 activeWorkout = nil
                 currentExerciseIndex = 0
+                stopExtendedSession()
             default:
                 break
             }
+        }
+    }
+}
+
+// MARK: - WKExtendedRuntimeSessionDelegate
+extension WatchWorkoutManager: WKExtendedRuntimeSessionDelegate {
+    func extendedRuntimeSessionDidStart(_ extendedRuntimeSession: WKExtendedRuntimeSession) {
+        print("Extended runtime session did start")
+    }
+
+    func extendedRuntimeSessionWillExpire(_ extendedRuntimeSession: WKExtendedRuntimeSession) {
+        print("Extended runtime session will expire - restarting")
+        // Restart the session to keep the app alive
+        self.extendedRuntimeSession = nil
+        startExtendedSession()
+    }
+
+    func extendedRuntimeSession(_ extendedRuntimeSession: WKExtendedRuntimeSession, didInvalidateWith reason: WKExtendedRuntimeSessionInvalidationReason, error: Error?) {
+        print("Extended runtime session invalidated: \(reason)")
+        if let error = error {
+            print("Extended runtime session error: \(error)")
+        }
+        self.extendedRuntimeSession = nil
+
+        // Restart if we still have an active workout
+        if activeWorkout != nil {
+            startExtendedSession()
         }
     }
 }

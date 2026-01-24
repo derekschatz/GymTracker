@@ -7,6 +7,7 @@ struct WatchWorkoutView: View {
     @State private var selectedWeight: Double = 0
     @State private var restTimer = 0
     @State private var timerActive = false
+    @State private var activeTimer: Timer?
     @State private var showingSetsSheet = false
     @State private var isUpdatingFromPhone = false
 
@@ -278,6 +279,9 @@ struct WatchWorkoutView: View {
     }
 
     private func startTimer(seconds: Int, sendToPhone: Bool = true) {
+        // Invalidate any existing timer before creating a new one
+        activeTimer?.invalidate()
+
         restTimer = seconds
         timerActive = true
 
@@ -285,17 +289,20 @@ struct WatchWorkoutView: View {
             workoutManager.sendTimerToPhone(seconds)
         }
 
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
+        activeTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
             if restTimer > 0 && timerActive {
                 restTimer -= 1
             } else {
                 timer.invalidate()
+                activeTimer = nil
                 timerActive = false
             }
         }
     }
 
     private func stopTimer(sendToPhone: Bool = true) {
+        activeTimer?.invalidate()
+        activeTimer = nil
         timerActive = false
         restTimer = 0
 
