@@ -103,7 +103,11 @@ struct ImporterView: View {
             dataManager.addPlans(plans)
             isPresented = false
         } catch {
-            errorMessage = "Failed to parse workout: \(error.localizedDescription)"
+            // Show diagnostic info
+            let lineCount = markdownText.components(separatedBy: .newlines).filter { !$0.isEmpty }.count
+            let charCount = markdownText.count
+            let firstChars = String(markdownText.prefix(100)).debugDescription
+            errorMessage = "Failed to parse workout.\nLines: \(lineCount), Chars: \(charCount)\nFirst 100 chars: \(firstChars)"
         }
     }
 }

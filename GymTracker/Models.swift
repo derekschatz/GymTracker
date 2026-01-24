@@ -26,7 +26,7 @@ struct Exercise: Identifiable, Codable, Hashable {
     var sets: [SetEntry]
     var supersetId: String?
 
-    init(id: UUID = UUID(), name: String, targetSets: Int, targetReps: String, tempo: String? = nil, notes: String? = nil, previousWeight: Double? = nil, sets: [SetEntry] = [], supersetId: String? = nil) {
+    init(id: UUID = UUID(), name: String, targetSets: Int = 0, targetReps: String = "", tempo: String? = nil, notes: String? = nil, previousWeight: Double? = nil, sets: [SetEntry] = [], supersetId: String? = nil) {
         self.id = id
         self.name = name
         self.targetSets = targetSets
@@ -36,6 +36,24 @@ struct Exercise: Identifiable, Codable, Hashable {
         self.previousWeight = previousWeight
         self.sets = sets
         self.supersetId = supersetId
+    }
+
+    // Custom decoder to handle old data that may have extra fields
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        targetSets = try container.decodeIfPresent(Int.self, forKey: .targetSets) ?? 0
+        targetReps = try container.decodeIfPresent(String.self, forKey: .targetReps) ?? ""
+        tempo = try container.decodeIfPresent(String.self, forKey: .tempo)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        previousWeight = try container.decodeIfPresent(Double.self, forKey: .previousWeight)
+        sets = try container.decodeIfPresent([SetEntry].self, forKey: .sets) ?? []
+        supersetId = try container.decodeIfPresent(String.self, forKey: .supersetId)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, targetSets, targetReps, tempo, notes, previousWeight, sets, supersetId
     }
 }
 

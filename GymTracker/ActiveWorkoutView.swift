@@ -129,6 +129,9 @@ struct ActiveWorkoutView: View {
                         isActive: $timerActive,
                         onStart: { seconds in
                             startRestTimer(seconds: seconds)
+                        },
+                        onStop: {
+                            stopRestTimer(sendToWatch: true)
                         }
                     )
                     .padding(.horizontal)
@@ -234,7 +237,20 @@ struct ActiveWorkoutView: View {
             .onReceive(NotificationCenter.default.publisher(for: .watchDidChangeExercise)) { notification in
                 handleWatchExerciseChange(notification)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .watchDidStartTimer)) { notification in
+                handleWatchTimerStart(notification)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .watchDidStopTimer)) { _ in
+                stopRestTimer(sendToWatch: false)
+            }
         }
+    }
+
+    private func handleWatchTimerStart(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let seconds = userInfo["seconds"] as? Int else { return }
+
+        startRestTimer(seconds: seconds, sendToWatch: false)
     }
 
     private func changeExerciseIndex(to index: Int) {
@@ -315,10 +331,15 @@ struct ActiveWorkoutView: View {
         }
     }
 
-    private func startRestTimer(seconds: Int) {
+    private func startRestTimer(seconds: Int, sendToWatch: Bool = true) {
         restTimeRemaining = seconds
         timerActive = true
         showTimer = true
+
+        // Send to watch
+        if sendToWatch {
+            watchManager.sendTimerToWatch(seconds: seconds)
+        }
 
         // Timer countdown
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
@@ -328,6 +349,15 @@ struct ActiveWorkoutView: View {
                 timer.invalidate()
                 timerActive = false
             }
+        }
+    }
+
+    private func stopRestTimer(sendToWatch: Bool = true) {
+        timerActive = false
+        restTimeRemaining = 0
+
+        if sendToWatch {
+            watchManager.sendTimerStopToWatch()
         }
     }
 
@@ -545,6 +575,7 @@ struct RestTimerBannerView: View {
     @Binding var timeRemaining: Int
     @Binding var isActive: Bool
     let onStart: (Int) -> Void
+    let onStop: () -> Void
 
     private let presets = [60, 90, 120, 180]
 
@@ -579,8 +610,7 @@ struct RestTimerBannerView: View {
                 }
 
                 Button {
-                    isActive = false
-                    timeRemaining = 0
+                    onStop()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.title2)

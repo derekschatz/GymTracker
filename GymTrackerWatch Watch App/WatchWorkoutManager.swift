@@ -89,6 +89,8 @@ class WatchWorkoutManager: NSObject, ObservableObject {
 
     @Published var activeWorkout: WatchWorkout?
     @Published var currentExerciseIndex: Int = 0
+    @Published var timerSecondsFromPhone: Int? = nil
+    @Published var timerStopFromPhone: Bool = false
 
     private var session: WCSession?
 
@@ -201,6 +203,29 @@ class WatchWorkoutManager: NSObject, ObservableObject {
             print("Error sending exercise index: \(error)")
         }
     }
+
+    func sendTimerToPhone(_ seconds: Int) {
+        guard let session = session, session.isReachable else { return }
+
+        let message: [String: Any] = [
+            "action": "startTimer",
+            "seconds": seconds
+        ]
+
+        session.sendMessage(message, replyHandler: nil) { error in
+            print("Error sending timer: \(error)")
+        }
+    }
+
+    func sendTimerStopToPhone() {
+        guard let session = session, session.isReachable else { return }
+
+        let message: [String: Any] = ["action": "stopTimer"]
+
+        session.sendMessage(message, replyHandler: nil) { error in
+            print("Error sending timer stop: \(error)")
+        }
+    }
 }
 
 extension WatchWorkoutManager: WCSessionDelegate {
@@ -288,6 +313,12 @@ extension WatchWorkoutManager: WCSessionDelegate {
                 if let exerciseIndex = message["exerciseIndex"] as? Int {
                     currentExerciseIndex = exerciseIndex
                 }
+            case "startTimer":
+                if let seconds = message["seconds"] as? Int {
+                    timerSecondsFromPhone = seconds
+                }
+            case "stopTimer":
+                timerStopFromPhone = true
             case "endWorkout":
                 activeWorkout = nil
                 currentExerciseIndex = 0

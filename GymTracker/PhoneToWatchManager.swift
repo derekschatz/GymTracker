@@ -133,6 +133,25 @@ class PhoneToWatchManager: NSObject, ObservableObject {
         session.sendMessage(message, replyHandler: nil, errorHandler: nil)
     }
 
+    // Send timer start to watch
+    func sendTimerToWatch(seconds: Int) {
+        guard let session = session, session.isReachable else { return }
+
+        let message: [String: Any] = [
+            "action": "startTimer",
+            "seconds": seconds
+        ]
+        session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+    }
+
+    // Send timer stop to watch
+    func sendTimerStopToWatch() {
+        guard let session = session, session.isReachable else { return }
+
+        let message: [String: Any] = ["action": "stopTimer"]
+        session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+    }
+
     private func generateQuickWeights(for exercise: Exercise) -> [Double] {
         let baseWeight = exercise.previousWeight ?? 0
         if baseWeight == 0 {
@@ -245,6 +264,21 @@ extension PhoneToWatchManager: WCSessionDelegate {
                     )
                 }
 
+            case "startTimer":
+                if let seconds = message["seconds"] as? Int {
+                    NotificationCenter.default.post(
+                        name: .watchDidStartTimer,
+                        object: nil,
+                        userInfo: ["seconds": seconds]
+                    )
+                }
+
+            case "stopTimer":
+                NotificationCenter.default.post(
+                    name: .watchDidStopTimer,
+                    object: nil
+                )
+
             default:
                 break
             }
@@ -257,4 +291,6 @@ extension Notification.Name {
     static let watchDidUpdateSet = Notification.Name("watchDidUpdateSet")
     static let watchDidDeleteSet = Notification.Name("watchDidDeleteSet")
     static let watchDidChangeExercise = Notification.Name("watchDidChangeExercise")
+    static let watchDidStartTimer = Notification.Name("watchDidStartTimer")
+    static let watchDidStopTimer = Notification.Name("watchDidStopTimer")
 }

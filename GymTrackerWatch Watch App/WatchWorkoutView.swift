@@ -41,6 +41,20 @@ struct WatchWorkoutView: View {
                 selectedWeight = exercise.lastWeight ?? 0
             }
         }
+        .onChange(of: workoutManager.timerSecondsFromPhone) { _, newValue in
+            // Start timer when phone sends timer event
+            if let seconds = newValue {
+                startTimer(seconds: seconds, sendToPhone: false)
+                workoutManager.timerSecondsFromPhone = nil
+            }
+        }
+        .onChange(of: workoutManager.timerStopFromPhone) { _, newValue in
+            // Stop timer when phone sends stop event
+            if newValue {
+                stopTimer(sendToPhone: false)
+                workoutManager.timerStopFromPhone = false
+            }
+        }
         .sheet(isPresented: $showingSetsSheet) {
             SetsEditView(
                 exerciseIndex: currentExerciseIndex,
@@ -205,8 +219,7 @@ struct WatchWorkoutView: View {
                     .buttonStyle(.bordered)
 
                     Button {
-                        timerActive = false
-                        restTimer = 0
+                        stopTimer(sendToPhone: true)
                     } label: {
                         Image(systemName: "xmark")
                     }
@@ -264,9 +277,13 @@ struct WatchWorkoutView: View {
         startTimer(seconds: 90)
     }
 
-    private func startTimer(seconds: Int) {
+    private func startTimer(seconds: Int, sendToPhone: Bool = true) {
         restTimer = seconds
         timerActive = true
+
+        if sendToPhone {
+            workoutManager.sendTimerToPhone(seconds)
+        }
 
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
             if restTimer > 0 && timerActive {
@@ -275,6 +292,15 @@ struct WatchWorkoutView: View {
                 timer.invalidate()
                 timerActive = false
             }
+        }
+    }
+
+    private func stopTimer(sendToPhone: Bool = true) {
+        timerActive = false
+        restTimer = 0
+
+        if sendToPhone {
+            workoutManager.sendTimerStopToPhone()
         }
     }
 

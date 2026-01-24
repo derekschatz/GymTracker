@@ -17,7 +17,107 @@ class WorkoutParser {
             return plans
         }
 
+        // Try lenient parsing as last resort
+        if let plans = try? parseLenient(markdown), !plans.isEmpty {
+            return plans
+        }
+
         throw ParserError.noExercisesFound
+    }
+
+    // Very lenient parser - just look for any line with a name followed by numbers
+    private static func parseLenient(_ text: String) throws -> [WorkoutPlan] {
+        // Aggressive normalization
+        var normalized = text
+        // Replace any non-ASCII characters that might look like spaces or dashes
+        for scalar in text.unicodeScalars {
+            if scalar.properties.isWhitespace && scalar != " " && scalar != "\n" {
+                normalized = normalized.replacingOccurrences(of: String(scalar), with: " ")
+            }
+        }
+        normalized = normalized
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\t", with: " ")
+
+        let lines = normalized.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        var exercises: [Exercise] = []
+        var currentPlanName = "Imported Workout"
+
+        for line in lines {
+            let lower = line.lowercased()
+
+            // Check for day markers
+            if lower.hasPrefix("day") && lower.contains(":") {
+                if let colonIdx = line.firstIndex(of: ":") {
+                    let afterColon = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
+                    if !afterColon.isEmpty {
+                        currentPlanName = afterColon
+                    }
+                }
+                continue
+            }
+
+            // Skip obvious non-exercise lines
+            if lower.contains("exercise") && lower.contains("sets") { continue }
+            if lower.contains("perform") || lower.contains("repeat") { continue }
+            if lower.contains("cardio") || lower.contains("interval") { continue }
+            if lower.contains("warm") || lower.contains("cool") { continue }
+            if lower.hasPrefix("primary") || lower.hasPrefix("secondary") { continue }
+            if lower.hasPrefix("main lift") || lower.hasPrefix("straight sets") { continue }
+            if lower.hasPrefix("finisher") || lower.hasPrefix("superset") { continue }
+
+            // Try to parse as exercise: look for pattern "words number number"
+            let words = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            guard words.count >= 3 else { continue }
+
+            // Find first number between 1-10 (likely sets)
+            var setsIndex: Int? = nil
+            for (i, word) in words.enumerated() {
+                if let num = Int(word), num >= 1 && num <= 10 {
+                    setsIndex = i
+                    break
+                }
+            }
+
+            guard let setIdx = setsIndex, setIdx > 0 else { continue }
+
+            let name = words[0..<setIdx].joined(separator: " ")
+            guard let sets = Int(words[setIdx]) else { continue }
+
+            // Get reps (next element after sets)
+            var reps = "10"
+            if setIdx + 1 < words.count {
+                // Collect rep components
+                var repParts: [String] = []
+                var idx = setIdx + 1
+                while idx < words.count {
+                    let part = words[idx]
+                    let cleaned = part.trimmingCharacters(in: CharacterSet(charactersIn: ","))
+                    if Int(cleaned) != nil || cleaned.contains("-") && cleaned.split(separator: "-").allSatisfy({ Int($0) != nil }) {
+                        repParts.append(part)
+                        idx += 1
+                    } else {
+                        break
+                    }
+                }
+                if !repParts.isEmpty {
+                    reps = repParts.joined(separator: " ").replacingOccurrences(of: " ,", with: ",")
+                }
+            }
+
+            let exercise = Exercise(name: name, targetSets: sets, targetReps: reps)
+            exercises.append(exercise)
+        }
+
+        guard !exercises.isEmpty else {
+            throw ParserError.noExercisesFound
+        }
+
+        return [WorkoutPlan(name: currentPlanName, exercises: exercises)]
     }
 
     // Original markdown format parser
@@ -133,7 +233,29 @@ class WorkoutParser {
     // "Superset:" or "SS:" followed by exercises on next lines
     // Or inline: "Bench Press / Rows 3 10"
     private static func parseSimpleFormat(_ text: String) throws -> [WorkoutPlan] {
-        let lines = text.components(separatedBy: .newlines)
+        // Normalize the text - handle special characters from iOS copy/paste
+        let normalizedText = text
+            // Line endings
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            // Tabs and special whitespace
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "\u{00A0}", with: " ") // Non-breaking space
+            .replacingOccurrences(of: "\u{2003}", with: " ") // Em space
+            .replacingOccurrences(of: "\u{2002}", with: " ") // En space
+            .replacingOccurrences(of: "\u{2009}", with: " ") // Thin space
+            // Smart dashes to regular hyphen
+            .replacingOccurrences(of: "–", with: "-") // En-dash
+            .replacingOccurrences(of: "—", with: "-") // Em-dash
+            .replacingOccurrences(of: "\u{2010}", with: "-") // Hyphen
+            .replacingOccurrences(of: "\u{2011}", with: "-") // Non-breaking hyphen
+            .replacingOccurrences(of: "\u{2012}", with: "-") // Figure dash
+            .replacingOccurrences(of: "\u{2013}", with: "-") // En-dash (again)
+            .replacingOccurrences(of: "\u{2014}", with: "-") // Em-dash (again)
+            // Collapse multiple spaces
+            .replacingOccurrences(of: "  +", with: " ", options: .regularExpression)
+
+        let lines = normalizedText.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
 
@@ -148,8 +270,8 @@ class WorkoutParser {
         var supersetExerciseCount = 0
         var supersetCounter = 0
 
-        // Check if text contains Day markers
-        let dayPattern = try? NSRegularExpression(pattern: "^Day\\s+\\d+", options: .caseInsensitive)
+        // Check if text contains Day markers - simpler string-based check
+        let dayPattern = try? NSRegularExpression(pattern: "^day\\s*\\d+", options: .caseInsensitive)
         let supersetHeaderPattern = try? NSRegularExpression(pattern: "^(superset|ss)\\s*:", options: .caseInsensitive)
 
         // Pattern to detect A1/A2/B1/B2 style exercise labels
@@ -160,15 +282,26 @@ class WorkoutParser {
 
         for line in lines {
             // Skip lines that look like headers or descriptions
-            if line.lowercased().contains("exercise") && line.lowercased().contains("sets") {
+            let lowerLine = line.lowercased()
+            if lowerLine.contains("exercise") && lowerLine.contains("sets") && lowerLine.contains("reps") {
                 continue
             }
 
-            // Skip instruction lines (contain keywords like "perform", "followed by", "repeat", "rounds", "rest")
-            let lowerLine = line.lowercased()
+            // Skip instruction lines
             if lowerLine.contains("perform") || lowerLine.contains("followed by") ||
                lowerLine.contains("repeat") || lowerLine.contains("rounds") ||
-               (lowerLine.contains("rest") && lowerLine.contains("second")) {
+               (lowerLine.contains("rest") && lowerLine.contains("second")) ||
+               (lowerLine.contains("rest") && lowerLine.contains("minute")) {
+                continue
+            }
+
+            // Skip description lines (contain colons but no numbers that could be sets)
+            if lowerLine.hasPrefix("primary movers") || lowerLine.hasPrefix("secondary") ||
+               lowerLine.hasPrefix("main lift") || lowerLine.hasPrefix("straight sets") ||
+               lowerLine.hasPrefix("finisher") || lowerLine.hasPrefix("cardio") ||
+               lowerLine.contains("rpm") || lowerLine.contains("rpe") ||
+               lowerLine.contains("intervals") || lowerLine.contains("warm-up") ||
+               lowerLine.contains("cooldown") || lowerLine.contains("cool-down") {
                 continue
             }
 
@@ -404,19 +537,36 @@ class WorkoutParser {
     }
 
     private static func parseExerciseLine(_ line: String) -> Exercise? {
+        // Skip lines that are clearly not exercises
+        let lowerLine = line.lowercased()
+        if lowerLine.hasPrefix("or:") && !lowerLine.contains(where: { $0.isNumber }) {
+            return nil
+        }
+
         // Split line into components
         let components = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
 
         guard components.count >= 3 else { return nil }
 
-        // Find first number (this should be sets)
-        guard let firstNumberIndex = components.firstIndex(where: { Int($0) != nil }) else {
+        // Find first standalone number (this should be sets)
+        // Must be a plain integer, not something like "3.5" or "8-12%"
+        guard let firstNumberIndex = components.firstIndex(where: {
+            if let num = Int($0), num >= 1 && num <= 20 {
+                return true // Reasonable set count
+            }
+            return false
+        }) else {
             return nil
         }
 
         // Everything before first number is exercise name
         let nameParts = components[0..<firstNumberIndex]
-        let name = nameParts.joined(separator: " ")
+        var name = nameParts.joined(separator: " ")
+
+        // Clean up name - remove leading labels like "A1:" if the label pattern didn't catch it
+        if let colonIndex = name.firstIndex(of: ":"), colonIndex < name.index(name.startIndex, offsetBy: min(4, name.count)) {
+            name = String(name[name.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+        }
 
         guard !name.isEmpty else { return nil }
 
