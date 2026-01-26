@@ -353,6 +353,7 @@ class WorkoutParser {
                         name: exercise.name,
                         targetSets: exercise.targetSets,
                         targetReps: exercise.targetReps,
+                        tempo: exercise.tempo,
                         notes: exercise.notes,
                         supersetId: ssId
                     )
@@ -386,6 +387,7 @@ class WorkoutParser {
                             name: exercise.name,
                             targetSets: exercise.targetSets,
                             targetReps: exercise.targetReps,
+                            tempo: exercise.tempo,
                             notes: exercise.notes,
                             supersetId: existingSupersetId
                         )
@@ -399,6 +401,7 @@ class WorkoutParser {
                             name: exercise.name,
                             targetSets: exercise.targetSets,
                             targetReps: exercise.targetReps,
+                            tempo: exercise.tempo,
                             notes: exercise.notes,
                             supersetId: ssId
                         )
@@ -411,6 +414,7 @@ class WorkoutParser {
                         name: exercise.name,
                         targetSets: exercise.targetSets,
                         targetReps: exercise.targetReps,
+                        tempo: exercise.tempo,
                         notes: exercise.notes,
                         supersetId: ssId
                     )
