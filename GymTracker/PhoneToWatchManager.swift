@@ -127,10 +127,22 @@ class PhoneToWatchManager: NSObject, ObservableObject {
 
     // End workout on watch
     func endWorkoutOnWatch() {
-        guard let session = session, session.isReachable else { return }
+        guard let session = session else { return }
 
         let message: [String: Any] = ["action": "endWorkout"]
-        session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+
+        // Send via sendMessage if watch is reachable
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+        }
+
+        // Always update application context to clear stale workout data
+        // This ensures the watch won't load an old workout on next launch
+        do {
+            try session.updateApplicationContext(message)
+        } catch {
+            print("Failed to clear workout context: \(error)")
+        }
     }
 
     // Send timer start to watch
