@@ -1,80 +1,67 @@
 # GymTracker
 
-A native iOS and watchOS app for tracking weightlifting workouts with real-time sync between your iPhone and Apple Watch.
+A simple, reliable fitness app for iOS and Apple Watch. Track your workouts,
+your food, and your body weight in one place — without the maintenance burden
+of bigger fitness apps.
 
-## Features
+## Philosophy
 
-### iOS App
-- **Import Workouts**: Parse workout plans from text with support for:
-  - Multi-day workout programs (Day 1, Day 2, etc.)
-  - Supersets (A1/A2 notation, inline format, or "Superset:" headers)
-  - Variable reps per set (e.g., "10, 8, 8, 6")
-  - Tempo notation (e.g., "3-1-1-0")
-- **Active Workout Tracking**:
-  - Log weight and reps for each set
-  - Rest timer with customizable presets (1m, 1:30, 2m, 3m)
-  - Visual progress through exercises
-  - Superset grouping with exercises displayed together
-- **Workout History**: Track completed sessions with volume calculations
-- **HealthKit Integration**: Sync workouts to Apple Health
-- **Previous Weight Tracking**: See what you lifted last time for each exercise
+- **Simple over feature-intensive.** Three tabs. Every common action is one
+  or two taps.
+- **Custom-first logging.** Create your own foods and exercises in seconds;
+  they're saved to your library and your recents for one-tap re-logging.
+- **Reliable.** All data is plain JSON stored on-device with atomic writes.
+  An in-progress workout survives a crash or force-quit. No accounts, no
+  network, no sync to break.
 
-### Watch App
-- **Companion App**: Full workout tracking from your wrist
-- **Digital Crown Support**: Adjust weight using the crown (±1 lb) or buttons (±5 lbs)
-- **Real-time Sync**:
-  - Set completions sync instantly between phone and watch
-  - Exercise navigation syncs both ways
-  - Edit or delete sets from either device
-- **Rest Timer**: Built-in countdown timer with quick-add options
-- **Set History**: Long-press exercise name to view/edit logged sets
+## The Three Tabs
 
-## Workout Import Format
+### Today
+Your fitness portfolio at a glance:
+- Calorie ring (eaten vs. goal) with protein/carb/fat totals
+- Today's training: start, resume, or review your workout
+- Body weight: one-tap logging with a trend chart
 
-The parser supports flexible workout formats:
+### Nutrition
+- Daily log organized by meal (breakfast, lunch, dinner, snacks)
+- Create custom foods (name, serving, calories, macros) — saved to your
+  library forever
+- Recents surface what you actually eat for one-tap logging
+- Flip back through previous days with the date arrows
 
-```
-Day 1: Push
-Barbell Bench Press 4 10, 8, 8, 6 3-1-1-0 Add weight each set
-Overhead Press 3 8-10 2-0-2-0
-Incline Dumbbell Press 3 10-12
+### Workout
+- Start an empty workout or launch a saved routine in one tap
+- Log sets (weight × reps) with a checkmark; weights prefill from the last
+  time you did the exercise
+- Built-in rest timer (synced to the watch)
+- Save any finished workout as a routine
+- Exercise library with custom exercises and progress charts
+- Full workout history
 
-Day 2: Pull
-A1. Barbell Row 4 8
-A2. Face Pulls 4 15
-Lat Pulldown 3 10-12
-```
+## Apple Watch
 
-### Supported Patterns
-- **Sets & Reps**: `Exercise Name [sets] [reps]`
-- **Variable Reps**: `Exercise 4 10, 8, 8, 6` (different reps per set)
-- **Rep Ranges**: `Exercise 3 8-10`
-- **Tempo**: `Exercise 3 10 3-1-1-0` or `Exercise 3 10 3010`
-- **Supersets**:
-  - `A1. Exercise / A2. Exercise`
-  - `Exercise1 / Exercise2 3 10`
-  - `Superset:` header followed by exercises
-- **Notes**: Any text after tempo is captured as notes
+The companion watch app tracks the active workout from your wrist:
+- Set completions sync instantly both ways
+- Adjust weight with the Digital Crown
+- Rest timer stays in sync with the phone
+
+## Apple Health
+
+Finished workouts are saved to Apple Health automatically (best-effort —
+a Health permission issue never blocks the app).
+
+## Data & Reliability
+
+- Models are plain `Codable` structs (`Models.swift`)
+- A single `AppStore` owns all state and persists each collection as a JSON
+  file in Application Support with atomic writes (`AppStore.swift`)
+- Data from the previous version of the app (workout plans and history) is
+  migrated automatically on first launch
 
 ## Requirements
 
-- iOS 17.0+
-- watchOS 10.0+
-- Xcode 15.0+
-
-## Installation
-
-1. Clone the repository
-2. Open `GymTracker.xcodeproj` in Xcode
-3. Select your development team in Signing & Capabilities
-4. Build and run on your device
-
-## Architecture
-
-- **SwiftUI**: Native UI framework for both iOS and watchOS
-- **WatchConnectivity**: Real-time communication between iPhone and Apple Watch
-- **HealthKit**: Integration with Apple Health for workout logging
-- **Codable**: JSON-based data persistence using UserDefaults
+- iOS 26.0+ / watchOS 26.2+
+- Xcode 16+
 
 ## Project Structure
 
@@ -82,20 +69,18 @@ Lat Pulldown 3 10-12
 GymTracker/
 ├── GymTracker/                    # iOS App
 │   ├── GymTrackerApp.swift        # App entry point
-│   ├── ContentView.swift          # Main view with workout list
-│   ├── ActiveWorkoutView.swift    # Active workout session UI
-│   ├── ImporterView.swift         # Workout import interface
-│   ├── Models.swift               # Data models
-│   ├── DataManager.swift          # Data persistence
-│   ├── WorkoutParser.swift        # Workout text parser
-│   ├── PhoneToWatchManager.swift  # Watch communication
-│   └── HealthKitManager.swift     # HealthKit integration
+│   ├── ContentView.swift          # Root tab view
+│   ├── TodayView.swift            # Dashboard, weight log, settings
+│   ├── NutritionView.swift        # Daily food log
+│   ├── AddFoodView.swift          # Food picker, custom foods, library
+│   ├── WorkoutView.swift          # Workout home, routines, history, progress
+│   ├── ActiveWorkoutView.swift    # Live workout session
+│   ├── Models.swift               # All data models
+│   ├── AppStore.swift             # State + JSON persistence + migration
+│   ├── PhoneToWatchManager.swift  # Watch sync
+│   └── HealthKitManager.swift     # Apple Health integration
 │
 └── GymTrackerWatch Watch App/     # watchOS App
-    ├── GymTrackerWatchApp.swift   # Watch app entry point
-    ├── WatchContentView.swift     # Watch main view
-    ├── WatchWorkoutView.swift     # Watch workout UI
-    └── WatchWorkoutManager.swift  # Watch state & phone communication
 ```
 
 ## License

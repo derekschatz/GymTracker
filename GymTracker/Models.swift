@@ -1,133 +1,231 @@
 import Foundation
-import SwiftUI
 
-// MARK: - Core Data Models
-
-struct WorkoutPlan: Identifiable, Codable, Hashable {
-    let id: UUID
-    var name: String
-    var exercises: [Exercise]
-
-    init(id: UUID = UUID(), name: String, exercises: [Exercise]) {
-        self.id = id
-        self.name = name
-        self.exercises = exercises
-    }
-}
+// MARK: - Exercise Library
 
 struct Exercise: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
-    var targetSets: Int
-    var targetReps: String
-    var tempo: String?
-    var notes: String?
-    var previousWeight: Double?
-    var sets: [SetEntry]
-    var supersetId: String?
 
-    init(id: UUID = UUID(), name: String, targetSets: Int = 0, targetReps: String = "", tempo: String? = nil, notes: String? = nil, previousWeight: Double? = nil, sets: [SetEntry] = [], supersetId: String? = nil) {
+    init(id: UUID = UUID(), name: String) {
         self.id = id
         self.name = name
-        self.targetSets = targetSets
-        self.targetReps = targetReps
-        self.tempo = tempo
-        self.notes = notes
-        self.previousWeight = previousWeight
-        self.sets = sets
-        self.supersetId = supersetId
-    }
-
-    // Custom decoder to handle old data that may have extra fields
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        targetSets = try container.decodeIfPresent(Int.self, forKey: .targetSets) ?? 0
-        targetReps = try container.decodeIfPresent(String.self, forKey: .targetReps) ?? ""
-        tempo = try container.decodeIfPresent(String.self, forKey: .tempo)
-        notes = try container.decodeIfPresent(String.self, forKey: .notes)
-        previousWeight = try container.decodeIfPresent(Double.self, forKey: .previousWeight)
-        sets = try container.decodeIfPresent([SetEntry].self, forKey: .sets) ?? []
-        supersetId = try container.decodeIfPresent(String.self, forKey: .supersetId)
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case id, name, targetSets, targetReps, tempo, notes, previousWeight, sets, supersetId
     }
 }
 
-struct SetEntry: Identifiable, Codable, Hashable {
+// MARK: - Workouts
+
+struct WorkoutSet: Identifiable, Codable, Hashable {
     let id: UUID
     var weight: Double
     var reps: Int
     var completed: Bool
-    var timestamp: Date?
 
-    init(id: UUID = UUID(), weight: Double, reps: Int, completed: Bool, timestamp: Date? = nil) {
+    init(id: UUID = UUID(), weight: Double = 0, reps: Int = 10, completed: Bool = false) {
         self.id = id
         self.weight = weight
         self.reps = reps
         self.completed = completed
-        self.timestamp = timestamp
     }
 }
 
-struct SessionRecord: Identifiable, Codable {
+struct WorkoutExercise: Identifiable, Codable, Hashable {
     let id: UUID
-    let planId: UUID
-    var planName: String
-    var date: Date
-    var exercises: [Exercise]
-    var totalVolume: Double
-    var heartRate: Double?
-    var calories: Double?
-    var duration: TimeInterval?
+    var name: String
+    var sets: [WorkoutSet]
 
-    init(id: UUID = UUID(), planId: UUID, planName: String, date: Date, exercises: [Exercise], totalVolume: Double, heartRate: Double? = nil, calories: Double? = nil, duration: TimeInterval? = nil) {
+    init(id: UUID = UUID(), name: String, sets: [WorkoutSet] = []) {
         self.id = id
-        self.planId = planId
-        self.planName = planName
+        self.name = name
+        self.sets = sets
+    }
+
+    var completedSets: [WorkoutSet] {
+        sets.filter(\.completed)
+    }
+
+    var volume: Double {
+        completedSets.reduce(0) { $0 + $1.weight * Double($1.reps) }
+    }
+
+    var topWeight: Double? {
+        completedSets.map(\.weight).max()
+    }
+}
+
+/// A finished workout session stored in history.
+struct Workout: Identifiable, Codable, Hashable {
+    let id: UUID
+    var name: String
+    var date: Date
+    var duration: TimeInterval
+    var exercises: [WorkoutExercise]
+
+    init(id: UUID = UUID(), name: String, date: Date, duration: TimeInterval, exercises: [WorkoutExercise]) {
+        self.id = id
+        self.name = name
         self.date = date
-        self.exercises = exercises
-        self.totalVolume = totalVolume
-        self.heartRate = heartRate
-        self.calories = calories
         self.duration = duration
+        self.exercises = exercises
+    }
+
+    var totalVolume: Double {
+        exercises.reduce(0) { $0 + $1.volume }
+    }
+
+    var completedSetCount: Int {
+        exercises.reduce(0) { $0 + $1.completedSets.count }
     }
 }
 
-// MARK: - Helper Extensions
+/// The workout currently in progress. Persisted so a crash or app
+/// termination never loses a session.
+struct ActiveWorkout: Identifiable, Codable, Equatable {
+    let id: UUID
+    var name: String
+    var startDate: Date
+    var exercises: [WorkoutExercise]
 
-extension Exercise {
-    func createDefaultSets() -> [SetEntry] {
-        // Check if reps are comma-separated (e.g., "10, 10, 8, 6")
-        let commaSeparated = targetReps.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    init(id: UUID = UUID(), name: String, startDate: Date = Date(), exercises: [WorkoutExercise] = []) {
+        self.id = id
+        self.name = name
+        self.startDate = startDate
+        self.exercises = exercises
+    }
+}
 
-        if commaSeparated.count > 1 {
-            // Use comma-separated values for each set
-            return (0..<targetSets).map { index in
-                let repString = index < commaSeparated.count ? commaSeparated[index] : commaSeparated.last ?? "0"
-                // Handle if individual rep is a range like "8-10" - use first number
-                let reps = Int(repString.components(separatedBy: "-").first ?? "0") ?? 0
-                return SetEntry(weight: previousWeight ?? 0, reps: reps, completed: false)
-            }
-        } else {
-            // Single value or range (e.g., "10" or "8-10") - use same for all sets
-            let defaultReps = Int(targetReps.components(separatedBy: "-").first ?? "0") ?? 0
-            return (0..<targetSets).map { _ in
-                SetEntry(weight: previousWeight ?? 0, reps: defaultReps, completed: false)
-            }
+// MARK: - Routines
+
+struct RoutineExercise: Identifiable, Codable, Hashable {
+    let id: UUID
+    var name: String
+    var setCount: Int
+    var reps: Int
+
+    init(id: UUID = UUID(), name: String, setCount: Int = 3, reps: Int = 10) {
+        self.id = id
+        self.name = name
+        self.setCount = setCount
+        self.reps = reps
+    }
+}
+
+struct Routine: Identifiable, Codable, Hashable {
+    let id: UUID
+    var name: String
+    var exercises: [RoutineExercise]
+
+    init(id: UUID = UUID(), name: String, exercises: [RoutineExercise] = []) {
+        self.id = id
+        self.name = name
+        self.exercises = exercises
+    }
+}
+
+// MARK: - Nutrition
+
+enum Meal: String, Codable, CaseIterable, Identifiable {
+    case breakfast, lunch, dinner, snacks
+
+    var id: String { rawValue }
+
+    var title: String { rawValue.capitalized }
+
+    var icon: String {
+        switch self {
+        case .breakfast: return "sunrise.fill"
+        case .lunch: return "sun.max.fill"
+        case .dinner: return "moon.fill"
+        case .snacks: return "carrot.fill"
         }
     }
 }
 
-extension SessionRecord {
-    static func calculateTotalVolume(exercises: [Exercise]) -> Double {
-        exercises.reduce(0.0) { total, exercise in
-            total + exercise.sets.filter(\.completed).reduce(0.0) { setTotal, set in
-                setTotal + (set.weight * Double(set.reps))
-            }
+struct Food: Identifiable, Codable, Hashable {
+    let id: UUID
+    var name: String
+    var serving: String
+    var calories: Double
+    var protein: Double
+    var carbs: Double
+    var fat: Double
+
+    init(id: UUID = UUID(), name: String, serving: String = "1 serving",
+         calories: Double = 0, protein: Double = 0, carbs: Double = 0, fat: Double = 0) {
+        self.id = id
+        self.name = name
+        self.serving = serving
+        self.calories = calories
+        self.protein = protein
+        self.carbs = carbs
+        self.fat = fat
+    }
+}
+
+/// A logged food. Stores a snapshot of the food so editing the library
+/// never rewrites past days.
+struct FoodEntry: Identifiable, Codable, Hashable {
+    let id: UUID
+    var date: Date
+    var meal: Meal
+    var food: Food
+    var servings: Double
+
+    init(id: UUID = UUID(), date: Date = Date(), meal: Meal, food: Food, servings: Double = 1) {
+        self.id = id
+        self.date = date
+        self.meal = meal
+        self.food = food
+        self.servings = servings
+    }
+
+    var calories: Double { food.calories * servings }
+    var protein: Double { food.protein * servings }
+    var carbs: Double { food.carbs * servings }
+    var fat: Double { food.fat * servings }
+}
+
+struct NutritionTotals {
+    var calories: Double = 0
+    var protein: Double = 0
+    var carbs: Double = 0
+    var fat: Double = 0
+}
+
+// MARK: - Body Weight & Goals
+
+struct WeightEntry: Identifiable, Codable, Hashable {
+    let id: UUID
+    var date: Date
+    var weight: Double
+
+    init(id: UUID = UUID(), date: Date = Date(), weight: Double) {
+        self.id = id
+        self.date = date
+        self.weight = weight
+    }
+}
+
+struct Goals: Codable, Equatable {
+    var calories: Double = 2000
+    var protein: Double = 150
+}
+
+// MARK: - Formatting Helpers
+
+extension Double {
+    /// "185" or "187.5" — no trailing ".0" noise.
+    var clean: String {
+        if truncatingRemainder(dividingBy: 1) == 0 {
+            return String(format: "%.0f", self)
         }
+        return String(format: "%.1f", self)
+    }
+}
+
+extension TimeInterval {
+    var shortDuration: String {
+        let minutes = Int(self) / 60
+        if minutes < 60 { return "\(minutes)m" }
+        return "\(minutes / 60)h \(minutes % 60)m"
     }
 }

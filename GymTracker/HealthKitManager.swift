@@ -1,86 +1,44 @@
 import Foundation
 import HealthKit
-import Combine
 
-class HealthKitManager: ObservableObject {
+/// Best-effort sync of finished workouts to Apple Health. Failures are
+/// logged and never interrupt the app.
+final class HealthKitManager {
     static let shared = HealthKitManager()
 
     private let healthStore = HKHealthStore()
-    @Published var isAuthorized = false
 
     private init() {}
 
-    func requestAuthorization() async throws {
-        guard HKHealthStore.isHealthDataAvailable() else {
-            throw HealthKitError.notAvailable
+    func saveWorkout(_ workout: Workout) async {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+
+        do {
+            try await healthStore.requestAuthorization(
+                toShare: [HKWorkoutType.workoutType()],
+                read: []
+            )
+
+            let duration = max(workout.duration, 60)
+            let endDate = workout.date.addingTimeInterval(duration)
+
+            let hkWorkout = HKWorkout(
+                activityType: .traditionalStrengthTraining,
+                start: workout.date,
+                end: endDate,
+                duration: duration,
+                totalEnergyBurned: nil,
+                totalDistance: nil,
+                metadata: [
+                    "name": workout.name,
+                    "totalVolume": workout.totalVolume,
+                    "exerciseCount": workout.exercises.count
+                ]
+            )
+
+            try await healthStore.save(hkWorkout)
+        } catch {
+            print("HealthKit save failed: \(error)")
         }
-
-        let typesToShare: Set<HKSampleType> = [
-            HKWorkoutType.workoutType()
-        ]
-
-        let typesToRead: Set<HKObjectType> = [
-            HKWorkoutType.workoutType(),
-            HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
-            HKObjectType.quantityType(forIdentifier: .heartRate)!
-        ]
-
-        try await healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead)
-        await MainActor.run {
-            isAuthorized = true
-        }
-    }
-
-    func saveWorkout(_ session: SessionRecord) async throws {
-        let startDate = session.date
-        let endDate = startDate.addingTimeInterval(session.duration ?? 3600)
-
-        let workout = HKWorkout(
-            activityType: .traditionalStrengthTraining,
-            start: startDate,
-            end: endDate,
-            duration: session.duration ?? 3600,
-            totalEnergyBurned: session.calories.map {
-                HKQuantity(unit: .kilocalorie(), doubleValue: $0)
-            },
-            totalDistance: nil,
-            metadata: [
-                "planName": session.planName,
-                "totalVolume": session.totalVolume,
-                "exerciseCount": session.exercises.count
-            ]
-        )
-
-        try await healthStore.save(workout)
-    }
-
-    func fetchRecentWorkouts(limit: Int = 10) async throws -> [HKWorkout] {
-        let workoutType = HKWorkoutType.workoutType()
-        let predicate = HKQuery.predicateForWorkouts(with: .traditionalStrengthTraining)
-        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: workoutType,
-                predicate: predicate,
-                limit: limit,
-                sortDescriptors: [sortDescriptor]
-            ) { _, samples, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let workouts = samples as? [HKWorkout] ?? []
-                continuation.resume(returning: workouts)
-            }
-
-            healthStore.execute(query)
-        }
-    }
-
-    enum HealthKitError: Error {
-        case notAvailable
-        case notAuthorized
     }
 }

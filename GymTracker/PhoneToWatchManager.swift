@@ -2,6 +2,9 @@ import Foundation
 import WatchConnectivity
 import Combine
 
+/// Syncs the active workout with the Apple Watch app. The wire format
+/// (WatchWorkoutData) is unchanged from the original app, so the watch
+/// app works as-is.
 class PhoneToWatchManager: NSObject, ObservableObject {
     static let shared = PhoneToWatchManager()
 
@@ -16,128 +19,57 @@ class PhoneToWatchManager: NSObject, ObservableObject {
         }
     }
 
-    // Send workout to watch when starting
-    func sendWorkoutToWatch(plan: WorkoutPlan) {
-        guard let session = session else {
-            print("WCSession not available")
-            return
-        }
+    // MARK: - Outgoing
 
-        print("Sending workout to watch - isPaired: \(session.isPaired), isReachable: \(session.isReachable), isWatchAppInstalled: \(session.isWatchAppInstalled)")
-
-        // Convert to watch-friendly format
-        let watchExercises = plan.exercises.map { exercise in
-            let completedSetEntries = exercise.sets.filter(\.completed).map { set in
-                WatchSetEntryData(id: set.id.uuidString, weight: set.weight, reps: set.reps)
-            }
-            return WatchExerciseData(
-                id: exercise.id.uuidString,
-                name: exercise.name,
-                targetSets: exercise.targetSets,
-                targetReps: exercise.targetReps,
-                tempo: exercise.tempo,
-                completedSets: completedSetEntries.count,
-                lastWeight: exercise.previousWeight,
-                quickWeights: generateQuickWeights(for: exercise),
-                loggedSets: completedSetEntries
-            )
-        }
-
-        let watchWorkout = WatchWorkoutData(
-            id: plan.id.uuidString,
-            name: plan.name,
-            exercises: watchExercises
-        )
+    func sendWorkoutToWatch(_ workout: ActiveWorkout) {
+        guard let session = session else { return }
 
         do {
-            let data = try JSONEncoder().encode(watchWorkout)
+            let data = try JSONEncoder().encode(watchData(for: workout))
             let message: [String: Any] = [
                 "action": "startWorkout",
                 "workout": data
             ]
 
-            // Try both methods for simulator compatibility
             if session.isReachable {
-                print("Sending via sendMessage")
                 session.sendMessage(message, replyHandler: nil) { error in
                     print("Error sending workout to watch: \(error)")
                 }
             }
 
-            // Always try applicationContext as backup
-            print("Sending via applicationContext")
+            // applicationContext as backup so the watch picks it up on launch
             try session.updateApplicationContext(message)
         } catch {
             print("Failed to send workout: \(error)")
         }
     }
 
-    // Update workout state on watch
-    func updateWorkoutOnWatch(plan: WorkoutPlan) {
-        guard let session = session, session.isPaired, session.isWatchAppInstalled else { return }
-
-        let watchExercises = plan.exercises.map { exercise in
-            let completedSetEntries = exercise.sets.filter(\.completed).map { set in
-                WatchSetEntryData(id: set.id.uuidString, weight: set.weight, reps: set.reps)
-            }
-            return WatchExerciseData(
-                id: exercise.id.uuidString,
-                name: exercise.name,
-                targetSets: exercise.targetSets,
-                targetReps: exercise.targetReps,
-                tempo: exercise.tempo,
-                completedSets: completedSetEntries.count,
-                lastWeight: exercise.sets.last(where: { $0.completed })?.weight ?? exercise.previousWeight,
-                quickWeights: generateQuickWeights(for: exercise),
-                loggedSets: completedSetEntries
-            )
-        }
-
-        let watchWorkout = WatchWorkoutData(
-            id: plan.id.uuidString,
-            name: plan.name,
-            exercises: watchExercises
-        )
+    func updateWorkoutOnWatch(_ workout: ActiveWorkout) {
+        guard let session = session, session.isReachable else { return }
 
         do {
-            let data = try JSONEncoder().encode(watchWorkout)
+            let data = try JSONEncoder().encode(watchData(for: workout))
             let message: [String: Any] = [
                 "action": "updateWorkout",
                 "workout": data
             ]
-
-            if session.isReachable {
-                session.sendMessage(message, replyHandler: nil, errorHandler: nil)
-            }
+            session.sendMessage(message, replyHandler: nil, errorHandler: nil)
         } catch {
             print("Failed to encode workout update: \(error)")
         }
     }
 
-    // Send current exercise index to watch
-    func sendExerciseIndexToWatch(_ index: Int) {
-        guard let session = session, session.isReachable else { return }
-
-        let message: [String: Any] = [
-            "action": "changeExercise",
-            "exerciseIndex": index
-        ]
-        session.sendMessage(message, replyHandler: nil, errorHandler: nil)
-    }
-
-    // End workout on watch
     func endWorkoutOnWatch() {
         guard let session = session else { return }
 
         let message: [String: Any] = ["action": "endWorkout"]
 
-        // Send via sendMessage if watch is reachable
         if session.isReachable {
             session.sendMessage(message, replyHandler: nil, errorHandler: nil)
         }
 
-        // Always update application context to clear stale workout data
-        // This ensures the watch won't load an old workout on next launch
+        // Always update application context so the watch won't load a
+        // stale workout on next launch.
         do {
             try session.updateApplicationContext(message)
         } catch {
@@ -145,40 +77,57 @@ class PhoneToWatchManager: NSObject, ObservableObject {
         }
     }
 
-    // Send timer start to watch
     func sendTimerToWatch(seconds: Int) {
         guard let session = session, session.isReachable else { return }
-
-        let message: [String: Any] = [
-            "action": "startTimer",
-            "seconds": seconds
-        ]
-        session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+        session.sendMessage(["action": "startTimer", "seconds": seconds], replyHandler: nil, errorHandler: nil)
     }
 
-    // Send timer stop to watch
     func sendTimerStopToWatch() {
         guard let session = session, session.isReachable else { return }
-
-        let message: [String: Any] = ["action": "stopTimer"]
-        session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+        session.sendMessage(["action": "stopTimer"], replyHandler: nil, errorHandler: nil)
     }
 
-    private func generateQuickWeights(for exercise: Exercise) -> [Double] {
-        let baseWeight = exercise.previousWeight ?? 0
-        if baseWeight == 0 {
-            return [45, 65, 95] // Default weights
+    // MARK: - Mapping
+
+    private func watchData(for workout: ActiveWorkout) -> WatchWorkoutData {
+        let exercises = workout.exercises.map { exercise -> WatchExerciseData in
+            let logged = exercise.sets.filter(\.completed).map { set in
+                WatchSetEntryData(id: set.id.uuidString, weight: set.weight, reps: set.reps)
+            }
+            let referenceWeight = exercise.sets.last(where: \.completed)?.weight
+                ?? exercise.sets.first?.weight
+                ?? 0
+
+            return WatchExerciseData(
+                id: exercise.id.uuidString,
+                name: exercise.name,
+                targetSets: exercise.sets.count,
+                targetReps: exercise.sets.first.map { String($0.reps) } ?? "",
+                tempo: nil,
+                completedSets: logged.count,
+                lastWeight: referenceWeight > 0 ? referenceWeight : nil,
+                quickWeights: quickWeights(around: referenceWeight),
+                loggedSets: logged
+            )
         }
-        // Suggest weights around the previous weight
-        return [
-            max(0, baseWeight - 10),
-            baseWeight,
-            baseWeight + 10
-        ]
+
+        return WatchWorkoutData(
+            id: workout.id.uuidString,
+            name: workout.name,
+            exercises: exercises
+        )
+    }
+
+    private func quickWeights(around weight: Double) -> [Double] {
+        if weight <= 0 {
+            return [45, 65, 95]
+        }
+        return [max(0, weight - 10), weight, weight + 10]
     }
 }
 
-// Codable structs for watch communication
+// MARK: - Wire Format (must match the watch app)
+
 struct WatchWorkoutData: Codable {
     let id: String
     let name: String
@@ -203,6 +152,8 @@ struct WatchExerciseData: Codable {
     var loggedSets: [WatchSetEntryData]
 }
 
+// MARK: - Incoming
+
 extension PhoneToWatchManager: WCSessionDelegate {
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         if let error = error {
@@ -216,7 +167,6 @@ extension PhoneToWatchManager: WCSessionDelegate {
         session.activate()
     }
 
-    // Receive set completion from watch
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
         DispatchQueue.main.async {
             guard let action = message["action"] as? String else { return }
@@ -229,11 +179,7 @@ extension PhoneToWatchManager: WCSessionDelegate {
                     NotificationCenter.default.post(
                         name: .watchDidCompleteSet,
                         object: nil,
-                        userInfo: [
-                            "exerciseIndex": exerciseIndex,
-                            "weight": weight,
-                            "reps": reps
-                        ]
+                        userInfo: ["exerciseIndex": exerciseIndex, "weight": weight, "reps": reps]
                     )
                 }
 
@@ -245,12 +191,7 @@ extension PhoneToWatchManager: WCSessionDelegate {
                     NotificationCenter.default.post(
                         name: .watchDidUpdateSet,
                         object: nil,
-                        userInfo: [
-                            "exerciseIndex": exerciseIndex,
-                            "setIndex": setIndex,
-                            "weight": weight,
-                            "reps": reps
-                        ]
+                        userInfo: ["exerciseIndex": exerciseIndex, "setIndex": setIndex, "weight": weight, "reps": reps]
                     )
                 }
 
@@ -260,10 +201,7 @@ extension PhoneToWatchManager: WCSessionDelegate {
                     NotificationCenter.default.post(
                         name: .watchDidDeleteSet,
                         object: nil,
-                        userInfo: [
-                            "exerciseIndex": exerciseIndex,
-                            "setIndex": setIndex
-                        ]
+                        userInfo: ["exerciseIndex": exerciseIndex, "setIndex": setIndex]
                     )
                 }
 
@@ -286,10 +224,7 @@ extension PhoneToWatchManager: WCSessionDelegate {
                 }
 
             case "stopTimer":
-                NotificationCenter.default.post(
-                    name: .watchDidStopTimer,
-                    object: nil
-                )
+                NotificationCenter.default.post(name: .watchDidStopTimer, object: nil)
 
             default:
                 break
