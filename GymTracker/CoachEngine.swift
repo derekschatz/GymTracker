@@ -39,7 +39,14 @@ final class CoachEngine {
     static let apiKeyKeychainKey = "anthropic_api_key"
 
     private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-    private let model = "claude-opus-4-8"
+
+    /// Coach chat: Sonnet is the speed/intelligence sweet spot for short,
+    /// data-grounded coaching turns with simple tool calls.
+    private let chatModel = "claude-sonnet-4-6"
+
+    /// Daily brief: a small summarize-the-context task that runs once per
+    /// user per day — Haiku keeps the highest-volume call the cheapest.
+    private let briefModel = "claude-haiku-4-5"
 
     var hasAPIKey: Bool {
         if let key = Keychain.load(Self.apiKeyKeychainKey), !key.isEmpty {
@@ -153,8 +160,8 @@ final class CoachEngine {
 
         for _ in 0..<5 {
             let body: [String: Any] = [
-                "model": model,
-                "max_tokens": 16000,
+                "model": chatModel,
+                "max_tokens": 4000,
                 "thinking": ["type": "adaptive"],
                 "system": [
                     ["type": "text", "text": Self.systemPrompt,
@@ -222,9 +229,8 @@ final class CoachEngine {
         }
 
         let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 2000,
-            "thinking": ["type": "adaptive"],
+            "model": briefModel,
+            "max_tokens": 1000,
             "system": [
                 ["type": "text", "text": Self.systemPrompt,
                  "cache_control": ["type": "ephemeral"]],
