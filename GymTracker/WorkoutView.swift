@@ -55,19 +55,23 @@ struct WorkoutView: View {
                 Button {
                     store.isWorkoutPresented = true
                 } label: {
-                    Label("Resume Workout", systemImage: "play.circle.fill")
-                        .font(.headline)
-                        .foregroundStyle(.green)
+                    GradientButtonLabel(title: "Resume Workout", systemImage: "play.fill",
+                                        colors: Theme.successColors)
                 }
+                .buttonStyle(.pressable)
             } else {
                 Button {
+                    Haptics.confirm()
                     store.startWorkout(name: defaultWorkoutName())
                 } label: {
-                    Label("Start Empty Workout", systemImage: "plus.circle.fill")
-                        .font(.headline)
+                    GradientButtonLabel(title: "Start Empty Workout", systemImage: "plus",
+                                        colors: Theme.trainingColors)
                 }
+                .buttonStyle(.pressable)
             }
         }
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
     }
 
     // MARK: - Routines
@@ -77,14 +81,18 @@ struct WorkoutView: View {
             ForEach(store.routines) { routine in
                 Button {
                     if store.activeWorkout == nil {
+                        Haptics.confirm()
                         store.startWorkout(from: routine)
                     } else {
                         store.isWorkoutPresented = true
                     }
                 } label: {
-                    HStack {
+                    HStack(spacing: 12) {
+                        GradientIcon(systemName: "figure.strengthtraining.traditional",
+                                     colors: Theme.trainingColors, size: 36)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(routine.name)
+                                .fontWeight(.medium)
                                 .foregroundStyle(.primary)
                             Text(routine.exercises.map(\.name).joined(separator: " · "))
                                 .font(.caption)
@@ -92,9 +100,9 @@ struct WorkoutView: View {
                                 .lineLimit(1)
                         }
                         Spacer()
-                        Image(systemName: "play.fill")
-                            .font(.caption)
-                            .foregroundStyle(.blue)
+                        Image(systemName: "play.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(Theme.training)
                     }
                 }
                 .swipeActions {
@@ -133,8 +141,11 @@ struct WorkoutView: View {
     private var historySection: some View {
         Section("History") {
             if store.workouts.isEmpty {
-                Text("Finished workouts will show up here.")
-                    .foregroundStyle(.secondary)
+                ContentUnavailableView {
+                    Label("No workouts yet", systemImage: "figure.strengthtraining.traditional")
+                } description: {
+                    Text("Finish your first workout and it will show up here.")
+                }
             } else {
                 ForEach(store.workouts.prefix(5)) { workout in
                     NavigationLink {
@@ -167,7 +178,9 @@ struct WorkoutView: View {
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
             }
-            .frame(width: 36)
+            .frame(width: 40, height: 44)
+            .background(Color.blue.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(workout.name)
@@ -481,20 +494,41 @@ struct ExerciseProgressView: View {
 
         List {
             if points.count >= 2 {
+                let weights = points.map(\.weight)
+                let floor = (weights.min() ?? 0) - 5
+                let ceiling = (weights.max() ?? 0) + 5
+
                 Section("Top Weight Over Time") {
                     Chart(Array(points.enumerated()), id: \.offset) { _, point in
+                        AreaMark(
+                            x: .value("Date", point.date),
+                            yStart: .value("Base", floor),
+                            yEnd: .value("Weight", point.weight)
+                        )
+                        .interpolationMethod(.catmullRom)
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color.blue.opacity(0.22), Color.blue.opacity(0.02)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+
                         LineMark(
                             x: .value("Date", point.date),
                             y: .value("Weight", point.weight)
                         )
                         .interpolationMethod(.catmullRom)
+                        .foregroundStyle(Theme.training)
+                        .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+
                         PointMark(
                             x: .value("Date", point.date),
                             y: .value("Weight", point.weight)
                         )
+                        .foregroundStyle(Color.indigo)
                     }
-                    .foregroundStyle(.blue)
-                    .chartYScale(domain: .automatic(includesZero: false))
+                    .chartYScale(domain: floor...ceiling)
                     .frame(height: 180)
                     .padding(.vertical, 8)
                 }

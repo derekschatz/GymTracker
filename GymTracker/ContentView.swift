@@ -14,7 +14,7 @@ struct ContentView: View {
             WorkoutView()
                 .tabItem { Label("Workout", systemImage: "dumbbell.fill") }
         }
-        .tint(.blue)
+        .tint(.indigo)
         .fullScreenCover(isPresented: $store.isWorkoutPresented) {
             ActiveWorkoutView()
         }

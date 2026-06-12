@@ -85,17 +85,32 @@ struct NutritionView: View {
         let totals = store.nutritionTotals(on: selectedDate)
         let goal = max(store.goals.calories, 1)
 
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text("\(totals.calories.clean)")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
                 Text("/ \(store.goals.calories.clean) cal")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
+                if totals.calories > 0 {
+                    Text("\(Int(min(totals.calories / goal, 9.99) * 100))%")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(totals.calories > goal ? Theme.gradient([.orange, .red]) : Theme.nutrition)
+                        .clipShape(Capsule())
+                }
             }
 
-            ProgressView(value: min(totals.calories / goal, 1))
-                .tint(totals.calories > goal ? .orange : .blue)
+            GradientBar(
+                progress: totals.calories / goal,
+                colors: totals.calories > goal ? [.orange, .red] : Theme.nutritionColors,
+                height: 10
+            )
 
             HStack {
                 macroLabel("P", totals.protein, .red)
@@ -104,20 +119,25 @@ struct NutritionView: View {
                 Spacer()
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        .animation(.spring(response: 0.6, dampingFraction: 0.8), value: totals.calories)
     }
 
     private func macroLabel(_ letter: String, _ grams: Double, _ color: Color) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
             Text(letter)
-                .font(.caption)
-                .fontWeight(.bold)
+                .font(.caption.weight(.bold))
                 .foregroundStyle(color)
             Text("\(grams.clean)g")
                 .font(.caption)
+                .monospacedDigit()
                 .foregroundStyle(.secondary)
+                .contentTransition(.numericText())
         }
-        .padding(.trailing, 8)
+        .padding(.trailing, 10)
     }
 
     // MARK: - Meals
@@ -162,13 +182,17 @@ struct NutritionView: View {
                     .fontWeight(.medium)
             }
         } header: {
-            HStack {
-                Label(meal.title, systemImage: meal.icon)
+            HStack(spacing: 8) {
+                GradientIcon(systemName: meal.icon, colors: meal.colors, size: 24)
+                Text(meal.title)
                 Spacer()
                 if calories > 0 {
                     Text("\(calories.clean) cal")
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
                 }
             }
+            .animation(.spring(response: 0.5, dampingFraction: 0.8), value: calories)
         }
     }
 
@@ -234,6 +258,7 @@ struct EditFoodEntrySheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         store.updateFoodEntry(entry)
+                        Haptics.tap()
                         dismiss()
                     }
                 }

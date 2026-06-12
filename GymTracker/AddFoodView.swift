@@ -63,6 +63,7 @@ struct AddFoodView: View {
                 FoodForm(food: Food(name: searchText)) { food in
                     store.addFood(food)
                     store.logFood(food, servings: 1, meal: meal, date: date)
+                    Haptics.success()
                     dismiss()
                 }
             }
@@ -155,6 +156,7 @@ struct LogFoodView: View {
             Section {
                 Button {
                     store.logFood(food, servings: servings, meal: meal, date: date)
+                    Haptics.success()
                     onLogged()
                 } label: {
                     Text("Add Food")

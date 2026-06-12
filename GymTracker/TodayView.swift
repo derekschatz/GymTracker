@@ -6,27 +6,39 @@ struct TodayView: View {
     @EnvironmentObject var store: AppStore
     @State private var showSettings = false
     @State private var showLogWeight = false
+    @State private var appeared = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
                     caloriesCard
                     workoutCard
                     weightCard
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 24)
+                .padding(.bottom, 32)
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Today")
+            .background {
+                ZStack {
+                    Color(.systemGroupedBackground)
+                    LinearGradient(
+                        colors: [Color.orange.opacity(0.08), .clear],
+                        startPoint: .top,
+                        endPoint: .center
+                    )
+                }
+                .ignoresSafeArea()
+            }
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showSettings = true
                     } label: {
-                        Image(systemName: "gearshape")
+                        Image(systemName: "gearshape.fill")
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -35,9 +47,37 @@ struct TodayView: View {
             }
             .sheet(isPresented: $showLogWeight) {
                 LogWeightSheet()
-                    .presentationDetents([.height(260)])
+                    .presentationDetents([.height(280)])
+            }
+            .onAppear {
+                withAnimation(.spring(response: 1.0, dampingFraction: 0.85).delay(0.15)) {
+                    appeared = true
+                }
             }
         }
+    }
+
+    // MARK: - Header
+
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12: return "Good morning"
+        case 12..<17: return "Good afternoon"
+        default: return "Good evening"
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(Date(), format: .dateTime.weekday(.wide).month(.wide).day())
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Text(greeting)
+                .font(.system(size: 32, weight: .bold, design: .rounded))
+        }
+        .padding(.top, 4)
     }
 
     // MARK: - Calories
@@ -47,68 +87,81 @@ struct TodayView: View {
         let goal = max(store.goals.calories, 1)
         let remaining = store.goals.calories - totals.calories
 
-        return VStack(spacing: 16) {
-            HStack(spacing: 20) {
+        return VStack(spacing: 20) {
+            HStack(spacing: 22) {
                 ZStack {
-                    Circle()
-                        .stroke(Color.blue.opacity(0.15), lineWidth: 12)
-                    Circle()
-                        .trim(from: 0, to: min(totals.calories / goal, 1))
-                        .stroke(Color.blue, style: StrokeStyle(lineWidth: 12, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
+                    ActivityRing(
+                        progress: appeared ? totals.calories / goal : 0,
+                        colors: Theme.nutritionColors
+                    )
                     VStack(spacing: 2) {
                         Text(abs(remaining).clean)
-                            .font(.system(size: 26, weight: .bold, design: .rounded))
-                        Text(remaining >= 0 ? "left" : "over")
+                            .font(.system(size: 30, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
+                        Text(remaining >= 0 ? "cal left" : "cal over")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: 120, height: 120)
+                .frame(width: 132, height: 132)
 
-                VStack(alignment: .leading, spacing: 12) {
-                    statRow(label: "Eaten", value: "\(totals.calories.clean) cal")
-                    statRow(label: "Goal", value: "\(store.goals.calories.clean) cal")
-                    statRow(label: "Protein", value: "\(totals.protein.clean) / \(store.goals.protein.clean) g")
+                VStack(alignment: .leading, spacing: 16) {
+                    miniStat(icon: "flame.fill", colors: Theme.nutritionColors,
+                             label: "Eaten", value: "\(totals.calories.clean) cal")
+                    miniStat(icon: "target", colors: Theme.trainingColors,
+                             label: "Goal", value: "\(store.goals.calories.clean) cal")
                 }
                 Spacer(minLength: 0)
             }
 
-            HStack(spacing: 12) {
-                macroChip(name: "Protein", grams: totals.protein, color: .red)
-                macroChip(name: "Carbs", grams: totals.carbs, color: .orange)
-                macroChip(name: "Fat", grams: totals.fat, color: .yellow)
+            VStack(spacing: 12) {
+                macroRow("Protein", value: totals.protein, target: store.goals.protein,
+                         showTarget: true, colors: [.red, .orange])
+                macroRow("Carbs", value: totals.carbs, target: goal * 0.5 / 4,
+                         showTarget: false, colors: [.orange, .yellow])
+                macroRow("Fat", value: totals.fat, target: goal * 0.3 / 9,
+                         showTarget: false, colors: [.yellow, .pink])
             }
         }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .animation(.spring(response: 0.6, dampingFraction: 0.8), value: totals.calories)
+        .card()
     }
 
-    private func statRow(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline)
-                .fontWeight(.semibold)
+    private func miniStat(icon: String, colors: [Color], label: String, value: String) -> some View {
+        HStack(spacing: 10) {
+            GradientIcon(systemName: icon, colors: colors, size: 30)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+            }
         }
     }
 
-    private func macroChip(name: String, grams: Double, color: Color) -> some View {
-        VStack(spacing: 3) {
-            Text("\(grams.clean)g")
-                .font(.subheadline)
-                .fontWeight(.bold)
-            Text(name)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+    private func macroRow(_ name: String, value: Double, target: Double,
+                          showTarget: Bool, colors: [Color]) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Text(name)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(showTarget ? "\(value.clean) / \(target.clean) g" : "\(value.clean) g")
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+            }
+            GradientBar(
+                progress: appeared && target > 0 ? value / target : 0,
+                colors: colors,
+                height: 8
+            )
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(color.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Workout
@@ -117,32 +170,28 @@ struct TodayView: View {
     private var workoutCard: some View {
         let todaysWorkouts = store.workouts(on: Date())
 
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Training", systemImage: "dumbbell.fill")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                GradientIcon(systemName: "dumbbell.fill", colors: Theme.trainingColors, size: 30)
+                Text("Training")
+                    .font(.headline)
+                Spacer()
+            }
 
             if store.activeWorkout != nil {
                 Button {
                     store.isWorkoutPresented = true
                 } label: {
-                    HStack {
-                        Image(systemName: "play.circle.fill")
-                        Text("Resume Workout")
-                            .fontWeight(.semibold)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                    }
-                    .padding(12)
-                    .background(Color.green.opacity(0.15))
-                    .foregroundStyle(.green)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    GradientButtonLabel(title: "Resume Workout", systemImage: "play.fill",
+                                        colors: Theme.successColors)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressable)
             } else if let workout = todaysWorkouts.first {
                 HStack(spacing: 12) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.green)
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.title)
+                        .foregroundStyle(Theme.success)
+                        .symbolEffect(.bounce, value: appeared)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(workout.name)
                             .fontWeight(.semibold)
@@ -153,84 +202,125 @@ struct TodayView: View {
                     Spacer()
                 }
                 .padding(12)
-                .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .background(Color.green.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 Button {
+                    Haptics.confirm()
                     store.startWorkout(name: defaultWorkoutName())
                 } label: {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Start Workout")
-                            .fontWeight(.semibold)
-                        Spacer()
-                    }
-                    .padding(12)
-                    .background(Color.blue.opacity(0.12))
-                    .foregroundStyle(.blue)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    GradientButtonLabel(title: "Start Workout", systemImage: "plus",
+                                        colors: Theme.trainingColors)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressable)
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .card()
     }
 
     // MARK: - Weight
 
     private var weightCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Body Weight", systemImage: "scalemass.fill")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                GradientIcon(systemName: "scalemass.fill", colors: Theme.weightColors, size: 30)
+                Text("Body Weight")
                     .font(.headline)
                 Spacer()
-                Button("Log") {
+                Button {
                     showLogWeight = true
+                } label: {
+                    Text("Log")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 7)
+                        .background(Theme.weight)
+                        .clipShape(Capsule())
                 }
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
+                .buttonStyle(.pressable)
             }
 
             if let latest = store.latestWeight {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(latest.weight.clean)
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
                     Text("lb")
+                        .font(.headline)
                         .foregroundStyle(.secondary)
+
+                    if store.weightEntries.count >= 2 {
+                        let delta = latest.weight - store.weightEntries[1].weight
+                        if delta != 0 {
+                            HStack(spacing: 2) {
+                                Image(systemName: delta < 0 ? "arrow.down.right" : "arrow.up.right")
+                                Text(abs(delta).clean)
+                            }
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(delta < 0 ? Color.teal : Color.orange)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background((delta < 0 ? Color.teal : Color.orange).opacity(0.12))
+                            .clipShape(Capsule())
+                            .padding(.leading, 4)
+                        }
+                    }
+
                     Spacer()
                     Text(latest.date, format: .dateTime.month(.abbreviated).day())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                .animation(.spring(response: 0.6, dampingFraction: 0.8), value: latest.weight)
 
-                let recent = Array(store.weightEntries.prefix(30)).reversed()
-                if recent.count >= 2 {
-                    Chart(Array(recent)) { entry in
-                        LineMark(
-                            x: .value("Date", entry.date),
-                            y: .value("Weight", entry.weight)
-                        )
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(.blue)
-                    }
-                    .chartYScale(domain: .automatic(includesZero: false))
-                    .frame(height: 90)
-                }
+                weightChart
             } else {
                 Text("Log your weight to start tracking the trend.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .card()
+    }
+
+    @ViewBuilder
+    private var weightChart: some View {
+        let recent = Array(store.weightEntries.prefix(30).reversed())
+        if recent.count >= 2 {
+            let weights = recent.map(\.weight)
+            let floor = (weights.min() ?? 0) - 2
+            let ceiling = (weights.max() ?? 0) + 2
+
+            Chart(recent) { entry in
+                AreaMark(
+                    x: .value("Date", entry.date),
+                    yStart: .value("Base", floor),
+                    yEnd: .value("Weight", entry.weight)
+                )
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.teal.opacity(0.25), Color.teal.opacity(0.02)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+
+                LineMark(
+                    x: .value("Date", entry.date),
+                    y: .value("Weight", entry.weight)
+                )
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(Theme.weight)
+                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            }
+            .chartYScale(domain: floor...ceiling)
+            .chartXAxis(.hidden)
+            .chartYAxis(.hidden)
+            .frame(height: 80)
+        }
     }
 }
 
@@ -253,11 +343,11 @@ struct LogWeightSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
+            VStack(spacing: 24) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     TextField("0", text: $weightText)
                         .keyboardType(.decimalPad)
-                        .font(.system(size: 44, weight: .bold, design: .rounded))
+                        .font(.system(size: 48, weight: .bold, design: .rounded))
                         .multilineTextAlignment(.trailing)
                         .fixedSize()
                         .focused($focused)
@@ -270,16 +360,16 @@ struct LogWeightSheet: View {
                 Button {
                     if let weight = Double(weightText), weight > 0 {
                         store.logWeight(weight)
+                        Haptics.success()
                     }
                     dismiss()
                 } label: {
-                    Text("Save")
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
+                    GradientButtonLabel(title: "Save", systemImage: "checkmark",
+                                        colors: Theme.weightColors)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.pressable)
                 .disabled(Double(weightText) == nil)
-                .padding(.horizontal)
+                .padding(.horizontal, 24)
             }
             .padding(.top, 24)
             .navigationTitle("Log Weight")
