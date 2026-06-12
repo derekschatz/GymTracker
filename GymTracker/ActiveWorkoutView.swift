@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// The live workout session. All exercises are visible in one scrolling
 /// list — no paging, no modes. Stays in sync with the Apple Watch.
