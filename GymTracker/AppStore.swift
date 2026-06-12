@@ -34,6 +34,35 @@ final class AppStore: ObservableObject {
     /// Drives the full-screen workout cover from any tab.
     @Published var isWorkoutPresented = false
 
+    /// Root tab selection, so any screen can deep-link to another tab.
+    @Published var selectedTab = 0
+
+    // MARK: Coach state
+
+    @Published var profile: UserProfile? {
+        didSet {
+            guard !isLoading else { return }
+            if let profile {
+                save(profile, as: FileName.profile)
+            } else {
+                removeFile(FileName.profile)
+            }
+        }
+    }
+
+    @Published private(set) var coachMessages: [CoachMessage] = []
+
+    @Published var dailyBrief: CoachBrief? {
+        didSet {
+            guard !isLoading else { return }
+            if let dailyBrief {
+                save(dailyBrief, as: FileName.dailyBrief)
+            } else {
+                removeFile(FileName.dailyBrief)
+            }
+        }
+    }
+
     private var isLoading = false
     private var cancellables = Set<AnyCancellable>()
     private var pendingWatchSync: DispatchWorkItem?
@@ -47,6 +76,9 @@ final class AppStore: ObservableObject {
         static let weightEntries = "weight-entries.json"
         static let goals = "goals.json"
         static let activeWorkout = "active-workout.json"
+        static let profile = "profile.json"
+        static let coachMessages = "coach-messages.json"
+        static let dailyBrief = "daily-brief.json"
     }
 
     private init() {
@@ -59,6 +91,9 @@ final class AppStore: ObservableObject {
         weightEntries = load([WeightEntry].self, from: FileName.weightEntries) ?? []
         goals = load(Goals.self, from: FileName.goals) ?? Goals()
         activeWorkout = load(ActiveWorkout.self, from: FileName.activeWorkout)
+        profile = load(UserProfile.self, from: FileName.profile)
+        coachMessages = load([CoachMessage].self, from: FileName.coachMessages) ?? []
+        dailyBrief = load(CoachBrief.self, from: FileName.dailyBrief)
 
         migrateLegacyDataIfNeeded()
         seedExercisesIfNeeded()
@@ -292,6 +327,114 @@ final class AppStore: ObservableObject {
 
     var latestWeight: WeightEntry? {
         weightEntries.first
+    }
+
+    // MARK: - Coach
+
+    func appendCoachMessage(_ message: CoachMessage) {
+        coachMessages.append(message)
+        // Keep the conversation bounded; old turns matter less than fresh data.
+        if coachMessages.count > 60 {
+            coachMessages.removeFirst(coachMessages.count - 60)
+        }
+        save(coachMessages, as: FileName.coachMessages)
+    }
+
+    func clearCoachConversation() {
+        coachMessages = []
+        removeFile(FileName.coachMessages)
+    }
+
+    var hasBriefForToday: Bool {
+        guard let dailyBrief else { return false }
+        return Calendar.current.isDateInToday(dailyBrief.date)
+    }
+
+    /// Everything the coach can see, as a compact text packet.
+    func coachContext() -> String {
+        var lines: [String] = ["CONTEXT — the user's real data as of \(Date().formatted(.dateTime.weekday(.wide).month().day())):"]
+
+        if let profile {
+            lines.append("PROFILE: goal=\(profile.goal.title), experience=\(profile.experience.title), wants to train \(profile.daysPerWeek) days/week, equipment=\(profile.equipment.title)")
+        } else {
+            lines.append("PROFILE: not set up yet")
+        }
+
+        lines.append("DAILY TARGETS: \(goals.calories.clean) cal, \(goals.protein.clean)g protein")
+
+        // Today's nutrition
+        let today = nutritionTotals(on: Date())
+        lines.append("TODAY SO FAR: \(today.calories.clean) cal eaten (P \(today.protein.clean)g / C \(today.carbs.clean)g / F \(today.fat.clean)g)")
+
+        // 7-day nutrition average over days that have entries
+        var loggedDays = 0
+        var calorieSum = 0.0
+        for offset in 0..<7 {
+            if let day = Calendar.current.date(byAdding: .day, value: -offset, to: Date()) {
+                let totals = nutritionTotals(on: day)
+                if totals.calories > 0 {
+                    loggedDays += 1
+                    calorieSum += totals.calories
+                }
+            }
+        }
+        if loggedDays > 0 {
+            lines.append("NUTRITION LAST 7 DAYS: logged \(loggedDays)/7 days, averaging \((calorieSum / Double(loggedDays)).clean) cal on logged days")
+        } else {
+            lines.append("NUTRITION LAST 7 DAYS: nothing logged")
+        }
+
+        // Body weight trend
+        if let latest = latestWeight {
+            var weightLine = "BODY WEIGHT: \(latest.weight.clean) lb (\(latest.date.formatted(.dateTime.month(.abbreviated).day())))"
+            if let monthAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date()),
+               let old = weightEntries.last(where: { $0.date >= monthAgo }),
+               old.id != latest.id {
+                let delta = latest.weight - old.weight
+                weightLine += ", \(delta >= 0 ? "+" : "")\(delta.clean) lb over ~30 days"
+            }
+            lines.append(weightLine)
+        } else {
+            lines.append("BODY WEIGHT: never logged")
+        }
+
+        // Training consistency — the signal that matters most for coaching.
+        let calendar = Calendar.current
+        let week = workouts.filter { $0.date > calendar.date(byAdding: .day, value: -7, to: Date()) ?? Date() }.count
+        let month = workouts.filter { $0.date > calendar.date(byAdding: .day, value: -28, to: Date()) ?? Date() }.count
+        if let last = workouts.first {
+            let daysAgo = calendar.dateComponents([.day], from: last.date, to: Date()).day ?? 0
+            lines.append("TRAINING: last workout \(daysAgo == 0 ? "today" : "\(daysAgo) days ago"); \(week) workouts in last 7 days, \(month) in last 28 days")
+        } else {
+            lines.append("TRAINING: no workouts logged yet")
+        }
+
+        if activeWorkout != nil {
+            lines.append("A WORKOUT IS IN PROGRESS RIGHT NOW.")
+        }
+
+        // Recent workouts with their lifts
+        for workout in workouts.prefix(3) {
+            let exercises = workout.exercises.map { exercise -> String in
+                if let top = exercise.topWeight {
+                    return "\(exercise.name) \(top.clean)x\(exercise.completedSets.last?.reps ?? 0)"
+                }
+                return exercise.name
+            }
+            lines.append("WORKOUT \(workout.date.formatted(.dateTime.month(.abbreviated).day())): \(workout.name) — \(exercises.joined(separator: ", "))")
+        }
+
+        // Saved routines
+        if routines.isEmpty {
+            lines.append("ROUTINES: none saved")
+        } else {
+            for routine in routines {
+                let items = routine.exercises.map { "\($0.name) \($0.setCount)x\($0.reps)" }
+                lines.append("ROUTINE '\(routine.name)': \(items.joined(separator: ", "))")
+            }
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Watch Sync

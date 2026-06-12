@@ -7,12 +7,14 @@ struct TodayView: View {
     @State private var showSettings = false
     @State private var showLogWeight = false
     @State private var appeared = false
+    @State private var briefLoading = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
+                    coachCard
                     caloriesCard
                     workoutCard
                     weightCard
@@ -78,6 +80,75 @@ struct TodayView: View {
                 .font(.system(size: 32, weight: .bold, design: .rounded))
         }
         .padding(.top, 4)
+    }
+
+    // MARK: - Coach Brief
+
+    private var coachCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                GradientIcon(systemName: "sparkles", colors: [.purple, .indigo], size: 30)
+                Text("Coach")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    store.selectedTab = 1
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("Ask")
+                            .font(.subheadline.weight(.semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(Theme.gradient([.purple, .indigo]))
+                }
+                .buttonStyle(.plain)
+            }
+
+            if !CoachEngine.shared.hasAPIKey {
+                Text("Your coach can see your training, food, and weight — and tell you the one thing to do today. Tap Ask to set it up.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if store.hasBriefForToday, let brief = store.dailyBrief {
+                Text(brief.text)
+                    .font(.subheadline)
+            } else {
+                Button {
+                    loadBrief()
+                } label: {
+                    HStack {
+                        if briefLoading {
+                            ProgressView()
+                                .padding(.trailing, 4)
+                            Text("Thinking…")
+                        } else {
+                            Image(systemName: "sun.max.fill")
+                            Text("Get today's brief")
+                        }
+                        Spacer()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.indigo)
+                    .padding(12)
+                    .background(Color.indigo.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.pressable)
+                .disabled(briefLoading)
+            }
+        }
+        .card()
+    }
+
+    private func loadBrief() {
+        briefLoading = true
+        Task {
+            if let text = try? await CoachEngine.shared.dailyBrief(context: store.coachContext()) {
+                store.dailyBrief = CoachBrief(date: Date(), text: text)
+                Haptics.tap()
+            }
+            briefLoading = false
+        }
     }
 
     // MARK: - Calories
@@ -394,10 +465,57 @@ struct LogWeightSheet: View {
 struct SettingsView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
+    @State private var apiKey = ""
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    SecureField("Claude API key", text: $apiKey)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .onChange(of: apiKey) { _, newValue in
+                            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if trimmed.isEmpty {
+                                Keychain.delete(CoachEngine.apiKeyKeychainKey)
+                            } else {
+                                Keychain.save(trimmed, for: CoachEngine.apiKeyKeychainKey)
+                            }
+                        }
+                } header: {
+                    Text("Coach")
+                } footer: {
+                    Text("Get a key at console.anthropic.com. Stored in your Keychain. Tracking works fully offline — only coach chats use the network.")
+                }
+
+                if store.profile != nil {
+                    Section("Your Profile") {
+                        Picker("Goal", selection: profileBinding(\.goal)) {
+                            ForEach(UserProfile.Goal.allCases) { goal in
+                                Text(goal.title).tag(goal)
+                            }
+                        }
+                        Picker("Experience", selection: profileBinding(\.experience)) {
+                            ForEach(UserProfile.Experience.allCases) { level in
+                                Text(level.title).tag(level)
+                            }
+                        }
+                        Stepper(value: profileBinding(\.daysPerWeek), in: 1...7) {
+                            HStack {
+                                Text("Training days")
+                                Spacer()
+                                Text("\(store.profile?.daysPerWeek ?? 3)/week")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Picker("Equipment", selection: profileBinding(\.equipment)) {
+                            ForEach(UserProfile.Equipment.allCases) { option in
+                                Text(option.title).tag(option)
+                            }
+                        }
+                    }
+                }
+
                 Section {
                     HStack {
                         Text("Calories")
@@ -432,6 +550,20 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .onAppear {
+                apiKey = Keychain.load(CoachEngine.apiKeyKeychainKey) ?? ""
+            }
         }
+    }
+
+    private func profileBinding<T>(_ keyPath: WritableKeyPath<UserProfile, T>) -> Binding<T> {
+        Binding(
+            get: { (store.profile ?? UserProfile())[keyPath: keyPath] },
+            set: { newValue in
+                var updated = store.profile ?? UserProfile()
+                updated[keyPath: keyPath] = newValue
+                store.profile = updated
+            }
+        )
     }
 }
