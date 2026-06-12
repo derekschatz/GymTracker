@@ -1,767 +1,516 @@
 import SwiftUI
+import Combine
 
+/// The live workout session. All exercises are visible in one scrolling
+/// list — no paging, no modes. Stays in sync with the Apple Watch.
 struct ActiveWorkoutView: View {
-    @EnvironmentObject var dataManager: DataManager
-    @EnvironmentObject var healthKitManager: HealthKitManager
-    @EnvironmentObject var watchManager: PhoneToWatchManager
-    @State var plan: WorkoutPlan
-    @Binding var isPresented: Bool
+    @EnvironmentObject var store: AppStore
 
-    @State private var currentGroupIndex = 0
-    @State private var showTimer = false
-    @State private var restTimeRemaining = 0
-    @State private var timerActive = false
-    @State private var startTime = Date()
-    @State private var showCancelAlert = false
-    @State private var isRestoredWorkout = false
+    @State private var showAddExercise = false
+    @State private var showFinishConfirm = false
+    @State private var showCancelConfirm = false
+    @State private var finishedWorkout: Workout?
 
-    var exerciseGroups: [[Int]] {
-        var groups: [[Int]] = []
-        var processedIndices = Set<Int>()
-
-        for (index, exercise) in plan.exercises.enumerated() {
-            if processedIndices.contains(index) { continue }
-
-            if let supersetId = exercise.supersetId {
-                var group: [Int] = []
-                for (i, ex) in plan.exercises.enumerated() {
-                    if ex.supersetId == supersetId {
-                        group.append(i)
-                        processedIndices.insert(i)
-                    }
-                }
-                groups.append(group)
-            } else {
-                groups.append([index])
-                processedIndices.insert(index)
-            }
-        }
-        return groups
-    }
-
-    var currentGroup: [Int] {
-        guard currentGroupIndex < exerciseGroups.count else { return [] }
-        return exerciseGroups[currentGroupIndex]
-    }
-
-    var isSuperset: Bool {
-        currentGroup.count > 1
-    }
-
-    var allSetsCompleted: Bool {
-        plan.exercises.allSatisfy { exercise in
-            exercise.sets.allSatisfy(\.completed)
-        }
-    }
-
-    var completedSetsCount: Int {
-        plan.exercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
-    }
-
-    var totalSetsCount: Int {
-        plan.exercises.reduce(0) { $0 + $1.sets.count }
-    }
+    // Rest timer
+    @State private var restEndDate: Date?
+    @State private var restDuration: TimeInterval = 90
+    @State private var now = Date()
+    private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color(.systemGroupedBackground)
-                    .ignoresSafeArea()
-
-                ScrollView {
-                    VStack(spacing: 20) {
-                        progressHeader
-
-                        if isSuperset {
-                            supersetBadge
+            Group {
+                if let workout = store.activeWorkout {
+                    workoutList(workout)
+                } else {
+                    // Finished/cancelled from elsewhere (e.g. the watch).
+                    Color(.systemGroupedBackground)
+                        .ignoresSafeArea()
+                        .onAppear {
+                            if finishedWorkout == nil {
+                                store.isWorkoutPresented = false
+                            }
                         }
-
-                        ForEach(currentGroup, id: \.self) { exerciseIndex in
-                            let exercise = plan.exercises[exerciseIndex]
-                            ExerciseCardView(
-                                exercise: exercise,
-                                exerciseIndex: exerciseIndex,
-                                plan: $plan,
-                                isSuperset: isSuperset,
-                                onSetComplete: { setIndex in
-                                    completeSet(exerciseIndex: exerciseIndex, setIndex: setIndex)
-                                },
-                                onDataChange: {
-                                    saveInProgressWorkout()
-                                }
-                            )
-                        }
-
-                        Spacer(minLength: 180)
-                    }
-                    .padding(.top, 12)
-                }
-
-                VStack(spacing: 0) {
-                    Spacer()
-
-                    RestTimerBannerView(
-                        timeRemaining: $restTimeRemaining,
-                        isActive: $timerActive,
-                        onStart: { seconds in
-                            startRestTimer(seconds: seconds)
-                        },
-                        onStop: {
-                            stopRestTimer(sendToWatch: true)
-                        }
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 10)
-
-                    navigationButtons
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 8)
-                        .padding(.top, 8)
-                        .background(.ultraThinMaterial)
                 }
             }
+            .navigationTitle(store.activeWorkout?.name ?? "Workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        showCancelAlert = true
+                        showCancelConfirm = true
                     } label: {
-                        Text("Cancel")
-                            .foregroundColor(.red)
+                        Image(systemName: "xmark")
                     }
                 }
-                ToolbarItem(placement: .principal) {
-                    Text(plan.name)
-                        .font(.headline)
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Finish") {
+                        if hasIncompleteSets {
+                            showFinishConfirm = true
+                        } else {
+                            finish()
+                        }
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(completedSetCount == 0 && (store.activeWorkout?.exercises.isEmpty ?? true))
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    }
                 }
             }
-            .alert("Cancel Workout?", isPresented: $showCancelAlert) {
-                Button("Keep Going", role: .cancel) { }
-                Button("Cancel Workout", role: .destructive) {
-                    dataManager.clearInProgressWorkout()
-                    watchManager.endWorkoutOnWatch()
-                    isPresented = false
+            .safeAreaInset(edge: .bottom) {
+                restTimerBar
+            }
+            .sheet(isPresented: $showAddExercise) {
+                ExercisePickerView { name in
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        store.activeWorkout?.exercises.append(store.newWorkoutExercise(named: name))
+                    }
+                }
+            }
+            .sheet(item: $finishedWorkout, onDismiss: { store.isWorkoutPresented = false }) { workout in
+                WorkoutCompleteView(workout: workout)
+            }
+            .confirmationDialog("Some sets aren't checked off.", isPresented: $showFinishConfirm, titleVisibility: .visible) {
+                Button("Finish Anyway") { finish() }
+                Button("Keep Going", role: .cancel) {}
+            } message: {
+                Text("Only completed sets are saved.")
+            }
+            .confirmationDialog("End this workout?", isPresented: $showCancelConfirm, titleVisibility: .visible) {
+                Button("Discard Workout", role: .destructive) {
+                    store.cancelActiveWorkout()
+                    store.isWorkoutPresented = false
+                }
+                Button("Minimize", role: .cancel) {
+                    store.isWorkoutPresented = false
                 }
             } message: {
-                Text("Your progress will be lost.")
+                Text("Minimize keeps the workout running so you can come back to it.")
             }
-            .onAppear {
-                if let inProgress = dataManager.inProgressWorkout, inProgress.planId == plan.id {
-                    plan.exercises = inProgress.exercises
-                    currentGroupIndex = inProgress.currentExerciseIndex
-                    startTime = inProgress.startTime
-                    isRestoredWorkout = true
-                } else {
-                    saveInProgressWorkout()
-                }
-                watchManager.sendWorkoutToWatch(plan: plan)
-                // Send the initial exercise index to the watch (first exercise of current group)
-                if currentGroupIndex < exerciseGroups.count, let firstExerciseIndex = exerciseGroups[currentGroupIndex].first {
-                    watchManager.sendExerciseIndexToWatch(firstExerciseIndex)
+            .onReceive(tick) { date in
+                guard let end = restEndDate else { return }
+                now = date
+                if end <= date {
+                    restEndDate = nil
+                    Haptics.success()
                 }
             }
-            .onChange(of: plan.exercises) { _, _ in
-                saveInProgressWorkout()
-                watchManager.updateWorkoutOnWatch(plan: plan)
-            }
-            .onChange(of: currentGroupIndex) { _, _ in
-                saveInProgressWorkout()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .watchDidCompleteSet)) { notification in
-                handleWatchSetComplete(notification)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .watchDidUpdateSet)) { notification in
-                handleWatchSetUpdate(notification)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .watchDidDeleteSet)) { notification in
-                handleWatchSetDelete(notification)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .watchDidChangeExercise)) { notification in
-                handleWatchExerciseChange(notification)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .watchDidStartTimer)) { notification in
-                handleWatchTimerStart(notification)
+            .onReceive(NotificationCenter.default.publisher(for: .watchDidStartTimer)) { note in
+                if let seconds = note.userInfo?["seconds"] as? Int {
+                    restDuration = TimeInterval(seconds)
+                    restEndDate = Date().addingTimeInterval(TimeInterval(seconds))
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .watchDidStopTimer)) { _ in
-                stopRestTimer(sendToWatch: false)
+                restEndDate = nil
             }
         }
     }
 
-    // MARK: - Progress Header
-    private var progressHeader: some View {
-        VStack(spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(isSuperset ? "Superset" : "Exercise")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .textCase(.uppercase)
-                    Text("\(currentGroupIndex + 1) of \(exerciseGroups.count)")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                }
+    // MARK: - List
 
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("Sets Done")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .textCase(.uppercase)
-                    Text("\(completedSetsCount)/\(totalSetsCount)")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundColor(.blue)
-                }
-            }
-
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color(.systemGray5))
-                        .frame(height: 6)
-
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [.blue, .blue.opacity(0.7)],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: geometry.size.width * CGFloat(currentGroupIndex + 1) / CGFloat(max(exerciseGroups.count, 1)), height: 6)
-                        .animation(.easeInOut(duration: 0.3), value: currentGroupIndex)
-                }
-            }
-            .frame(height: 6)
-        }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
-        .cornerRadius(14)
-        .padding(.horizontal, 16)
-    }
-
-    private var supersetBadge: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 12, weight: .semibold))
-            Text("SUPERSET")
-                .font(.system(size: 12, weight: .bold))
-        }
-        .foregroundColor(.purple)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.purple.opacity(0.12))
-        .cornerRadius(20)
-    }
-
-    private var navigationButtons: some View {
-        HStack(spacing: 12) {
-            if currentGroupIndex > 0 {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        changeExerciseIndex(to: currentGroupIndex - 1)
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 14, weight: .semibold))
-                        Text("Previous")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .foregroundColor(.primary)
-                    .cornerRadius(12)
-                }
-            }
-
-            if currentGroupIndex < exerciseGroups.count - 1 {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        changeExerciseIndex(to: currentGroupIndex + 1)
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Next")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 14, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
-                }
-            } else {
-                Button {
-                    finishWorkout()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 16))
-                        Text("Finish Workout")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(allSetsCompleted ? Color.green : Color.orange)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
-                }
-            }
-        }
-    }
-
-    // MARK: - Event Handlers
-    private func handleWatchTimerStart(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let seconds = userInfo["seconds"] as? Int else { return }
-        startRestTimer(seconds: seconds, sendToWatch: false)
-    }
-
-    private func changeExerciseIndex(to index: Int) {
-        currentGroupIndex = index
-        // Send the first exercise index of the current group to the watch
-        // The watch uses a flat exercise list, not groups
-        if index < exerciseGroups.count, let firstExerciseIndex = exerciseGroups[index].first {
-            watchManager.sendExerciseIndexToWatch(firstExerciseIndex)
-        }
-    }
-
-    private func handleWatchExerciseChange(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let exerciseIndex = userInfo["exerciseIndex"] as? Int else { return }
-
-        // Find which group contains this exercise index
-        for (groupIndex, group) in exerciseGroups.enumerated() {
-            if group.contains(exerciseIndex) {
-                currentGroupIndex = groupIndex
-                return
-            }
-        }
-    }
-
-    private func handleWatchSetComplete(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let exerciseIndex = userInfo["exerciseIndex"] as? Int,
-              let weight = userInfo["weight"] as? Double,
-              let reps = userInfo["reps"] as? Int,
-              exerciseIndex < plan.exercises.count else { return }
-
-        if let setIndex = plan.exercises[exerciseIndex].sets.firstIndex(where: { !$0.completed }) {
-            plan.exercises[exerciseIndex].sets[setIndex].weight = weight
-            plan.exercises[exerciseIndex].sets[setIndex].reps = reps
-            plan.exercises[exerciseIndex].sets[setIndex].completed = true
-            plan.exercises[exerciseIndex].sets[setIndex].timestamp = Date()
-        }
-    }
-
-    private func handleWatchSetUpdate(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let exerciseIndex = userInfo["exerciseIndex"] as? Int,
-              let setIndex = userInfo["setIndex"] as? Int,
-              let weight = userInfo["weight"] as? Double,
-              let reps = userInfo["reps"] as? Int,
-              exerciseIndex < plan.exercises.count,
-              setIndex < plan.exercises[exerciseIndex].sets.count else { return }
-
-        plan.exercises[exerciseIndex].sets[setIndex].weight = weight
-        plan.exercises[exerciseIndex].sets[setIndex].reps = reps
-    }
-
-    private func handleWatchSetDelete(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let exerciseIndex = userInfo["exerciseIndex"] as? Int,
-              let setIndex = userInfo["setIndex"] as? Int,
-              exerciseIndex < plan.exercises.count,
-              setIndex < plan.exercises[exerciseIndex].sets.count else { return }
-
-        plan.exercises[exerciseIndex].sets[setIndex].completed = false
-        plan.exercises[exerciseIndex].sets[setIndex].timestamp = nil
-    }
-
-    private func saveInProgressWorkout() {
-        let inProgress = DataManager.InProgressWorkout(
-            planId: plan.id,
-            planName: plan.name,
-            exercises: plan.exercises,
-            startTime: startTime,
-            currentExerciseIndex: currentGroupIndex
-        )
-        dataManager.saveInProgressWorkout(inProgress)
-    }
-
-    private func completeSet(exerciseIndex: Int, setIndex: Int) {
-        plan.exercises[exerciseIndex].sets[setIndex].completed = true
-        plan.exercises[exerciseIndex].sets[setIndex].timestamp = Date()
-        saveInProgressWorkout()
-
-        if !isSuperset || allExercisesCompletedForSet(setIndex) {
-            startRestTimer(seconds: 90)
-        }
-    }
-
-    private func startRestTimer(seconds: Int, sendToWatch: Bool = true) {
-        restTimeRemaining = seconds
-        timerActive = true
-        showTimer = true
-
-        if sendToWatch {
-            watchManager.sendTimerToWatch(seconds: seconds)
-        }
-
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
-            if restTimeRemaining > 0 && timerActive {
-                restTimeRemaining -= 1
-            } else {
-                timer.invalidate()
-                timerActive = false
-            }
-        }
-    }
-
-    private func stopRestTimer(sendToWatch: Bool = true) {
-        timerActive = false
-        restTimeRemaining = 0
-
-        if sendToWatch {
-            watchManager.sendTimerStopToWatch()
-        }
-    }
-
-    private func allExercisesCompletedForSet(_ setIndex: Int) -> Bool {
-        for exerciseIndex in currentGroup {
-            if setIndex < plan.exercises[exerciseIndex].sets.count {
-                if !plan.exercises[exerciseIndex].sets[setIndex].completed {
-                    return false
-                }
-            }
-        }
-        return true
-    }
-
-    private func finishWorkout() {
-        let duration = Date().timeIntervalSince(startTime)
-        let totalVolume = SessionRecord.calculateTotalVolume(exercises: plan.exercises)
-
-        let session = SessionRecord(
-            planId: plan.id,
-            planName: plan.name,
-            date: startTime,
-            exercises: plan.exercises,
-            totalVolume: totalVolume,
-            duration: duration
-        )
-
-        dataManager.addSession(session)
-        watchManager.endWorkoutOnWatch()
-
-        Task {
-            do {
-                try await healthKitManager.saveWorkout(session)
-            } catch {
-                print("Failed to save to HealthKit: \(error)")
-            }
-        }
-
-        isPresented = false
-    }
-}
-
-// MARK: - Exercise Card View
-struct ExerciseCardView: View {
-    let exercise: Exercise
-    let exerciseIndex: Int
-    @Binding var plan: WorkoutPlan
-    let isSuperset: Bool
-    let onSetComplete: (Int) -> Void
-    let onDataChange: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            // Exercise Header
-            VStack(alignment: .leading, spacing: 10) {
-                Text(exercise.name)
-                    .font(.system(size: isSuperset ? 20 : 24, weight: .bold, design: .rounded))
-
-                HStack(spacing: 16) {
-                    Label("\(exercise.targetSets) sets", systemImage: "repeat")
-                    Label("\(exercise.targetReps) reps", systemImage: "number")
-                    if let tempo = exercise.tempo {
-                        Label(tempo, systemImage: "metronome")
-                    }
-                }
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
-                if let notes = exercise.notes {
-                    HStack(spacing: 8) {
-                        Image(systemName: "lightbulb.fill")
-                            .foregroundColor(.orange)
-                        Text(notes)
-                    }
-                    .font(.caption)
-                    .padding(10)
-                    .background(Color.orange.opacity(0.1))
-                    .cornerRadius(8)
-                }
-
-                if let previousWeight = exercise.previousWeight {
-                    HStack(spacing: 8) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .foregroundColor(.blue)
-                        Text("Last: \(Int(previousWeight)) lbs")
-                    }
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .padding(10)
-                    .background(Color.blue.opacity(0.1))
-                    .cornerRadius(8)
-                }
-            }
-
-            // Sets
-            VStack(spacing: 8) {
-                ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { setIndex, set in
-                    SetRowView(
-                        setNumber: setIndex + 1,
-                        set: Binding(
-                            get: { plan.exercises[exerciseIndex].sets[setIndex] },
-                            set: { newValue in
-                                plan.exercises[exerciseIndex].sets[setIndex] = newValue
-                                onDataChange()
-                            }
-                        ),
-                        onComplete: {
-                            onSetComplete(setIndex)
+    private func workoutList(_ workout: ActiveWorkout) -> some View {
+        List {
+            Section {
+                VStack(spacing: 10) {
+                    HStack {
+                        Label {
+                            Text(timerInterval: workout.startDate...Date.distantFuture, countsDown: false)
+                                .monospacedDigit()
+                        } icon: {
+                            Image(systemName: "clock.fill")
+                                .foregroundStyle(Theme.training)
                         }
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Text("\(completedSetCount)/\(totalSetCount) sets")
+                            .font(.subheadline.weight(.semibold))
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    GradientBar(
+                        progress: totalSetCount > 0 ? Double(completedSetCount) / Double(totalSetCount) : 0,
+                        colors: Theme.trainingColors,
+                        height: 8
                     )
                 }
+                .padding(.vertical, 4)
+                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: completedSetCount)
+            }
+
+            ForEach(workout.exercises) { exercise in
+                exerciseSection(exercise)
+            }
+
+            Section {
+                Button {
+                    showAddExercise = true
+                } label: {
+                    Label("Add Exercise", systemImage: "plus.circle.fill")
+                        .font(.headline)
+                        .foregroundStyle(Theme.training)
+                }
             }
         }
-        .padding(18)
-        .background(Color(.secondarySystemGroupedBackground))
-        .cornerRadius(16)
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(isSuperset ? Color.purple.opacity(0.25) : Color.clear, lineWidth: 2)
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    private func exerciseSection(_ exercise: WorkoutExercise) -> some View {
+        Section {
+            ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { index, set in
+                SetRow(
+                    index: index,
+                    set: setBinding(exerciseId: exercise.id, setId: set.id),
+                    onComplete: {
+                        if !set.completed, restEndDate == nil {
+                            startRest(seconds: 90)
+                        }
+                    }
+                )
+            }
+            .onDelete { offsets in
+                deleteSets(exerciseId: exercise.id, at: offsets)
+            }
+
+            Button {
+                Haptics.tap()
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    addSet(to: exercise.id)
+                }
+            } label: {
+                Label("Add Set", systemImage: "plus")
+                    .font(.subheadline.weight(.medium))
+            }
+        } header: {
+            HStack {
+                Text(exercise.name)
+                Spacer()
+                if let last = store.lastSets(for: exercise.name)?.last {
+                    Text("last: \(last.weight.clean) lb × \(last.reps)")
+                        .textCase(nil)
+                }
+                Menu {
+                    Button(role: .destructive) {
+                        removeExercise(exercise.id)
+                    } label: {
+                        Label("Remove Exercise", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.body)
+                }
+            }
+        }
+    }
+
+    // MARK: - Rest Timer Bar
+
+    @ViewBuilder
+    private var restTimerBar: some View {
+        if store.activeWorkout != nil {
+            HStack(spacing: 12) {
+                if let end = restEndDate, end > now {
+                    restRing(end: end)
+                    Text(timerInterval: Date()...end, countsDown: true)
+                        .font(.title3.weight(.semibold).monospacedDigit())
+                    Spacer()
+                    Button("+30s") {
+                        Haptics.tap()
+                        restEndDate = end.addingTimeInterval(30)
+                        restDuration += 30
+                        sendTimerToWatch()
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
+                    Button {
+                        stopRest()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Image(systemName: "timer")
+                        .foregroundStyle(.secondary)
+                    Text("Rest")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    ForEach([60, 90, 120, 180], id: \.self) { seconds in
+                        Button(restLabel(seconds)) {
+                            startRest(seconds: seconds)
+                        }
+                        .font(.subheadline.monospacedDigit())
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.bar)
+        }
+    }
+
+    private func restRing(end: Date) -> some View {
+        let remaining = max(end.timeIntervalSince(now), 0)
+        let fraction = restDuration > 0 ? remaining / restDuration : 0
+
+        return ZStack {
+            Circle()
+                .stroke(Color.orange.opacity(0.2), lineWidth: 4)
+            Circle()
+                .trim(from: 0, to: max(min(fraction, 1), 0.001))
+                .stroke(
+                    Theme.gradient([.orange, .red]),
+                    style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 0.25), value: fraction)
+        }
+        .frame(width: 26, height: 26)
+    }
+
+    private func restLabel(_ seconds: Int) -> String {
+        seconds % 60 == 0 ? "\(seconds / 60):00" : "\(seconds / 60):\(seconds % 60)"
+    }
+
+    private func startRest(seconds: Int) {
+        Haptics.tap()
+        restDuration = TimeInterval(seconds)
+        restEndDate = Date().addingTimeInterval(TimeInterval(seconds))
+        now = Date()
+        sendTimerToWatch()
+    }
+
+    private func stopRest() {
+        restEndDate = nil
+        PhoneToWatchManager.shared.sendTimerStopToWatch()
+    }
+
+    private func sendTimerToWatch() {
+        if let end = restEndDate {
+            let remaining = Int(end.timeIntervalSinceNow.rounded())
+            if remaining > 0 {
+                PhoneToWatchManager.shared.sendTimerToWatch(seconds: remaining)
+            }
+        }
+    }
+
+    // MARK: - Mutations
+
+    private func setBinding(exerciseId: UUID, setId: UUID) -> Binding<WorkoutSet> {
+        Binding(
+            get: {
+                store.activeWorkout?.exercises
+                    .first(where: { $0.id == exerciseId })?
+                    .sets.first(where: { $0.id == setId }) ?? WorkoutSet()
+            },
+            set: { newValue in
+                guard let exerciseIndex = store.activeWorkout?.exercises.firstIndex(where: { $0.id == exerciseId }),
+                      let setIndex = store.activeWorkout?.exercises[exerciseIndex].sets.firstIndex(where: { $0.id == setId })
+                else { return }
+                store.activeWorkout?.exercises[exerciseIndex].sets[setIndex] = newValue
+            }
         )
-        .padding(.horizontal, 16)
+    }
+
+    private func addSet(to exerciseId: UUID) {
+        guard let index = store.activeWorkout?.exercises.firstIndex(where: { $0.id == exerciseId }) else { return }
+        let last = store.activeWorkout?.exercises[index].sets.last
+        store.activeWorkout?.exercises[index].sets.append(
+            WorkoutSet(weight: last?.weight ?? 0, reps: last?.reps ?? 10)
+        )
+    }
+
+    private func removeExercise(_ exerciseId: UUID) {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            store.activeWorkout?.exercises.removeAll { $0.id == exerciseId }
+        }
+    }
+
+    private func deleteSets(exerciseId: UUID, at offsets: IndexSet) {
+        guard let index = store.activeWorkout?.exercises.firstIndex(where: { $0.id == exerciseId }) else { return }
+        store.activeWorkout?.exercises[index].sets.remove(atOffsets: offsets)
+        if store.activeWorkout?.exercises[index].sets.isEmpty == true {
+            store.activeWorkout?.exercises.remove(at: index)
+        }
+    }
+
+    private var completedSetCount: Int {
+        store.activeWorkout?.exercises.reduce(0) { $0 + $1.completedSets.count } ?? 0
+    }
+
+    private var totalSetCount: Int {
+        store.activeWorkout?.exercises.reduce(0) { $0 + $1.sets.count } ?? 0
+    }
+
+    private var hasIncompleteSets: Bool {
+        completedSetCount < totalSetCount
+    }
+
+    private func finish() {
+        stopRest()
+        if let workout = store.finishActiveWorkout() {
+            Task {
+                await HealthKitManager.shared.saveWorkout(workout)
+            }
+            finishedWorkout = workout
+        } else {
+            store.isWorkoutPresented = false
+        }
     }
 }
 
-// MARK: - Set Row View
-struct SetRowView: View {
-    let setNumber: Int
-    @Binding var set: SetEntry
+// MARK: - Set Row
+
+private struct SetRow: View {
+    let index: Int
+    @Binding var set: WorkoutSet
     let onComplete: () -> Void
 
-    @FocusState private var weightFocused: Bool
-    @FocusState private var repsFocused: Bool
-
     var body: some View {
-        HStack(spacing: 14) {
-            // Set number badge
-            Text("\(setNumber)")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundColor(set.completed ? .white : .secondary)
-                .frame(width: 28, height: 28)
-                .background(set.completed ? Color.green : Color(.systemGray5))
-                .cornerRadius(8)
+        HStack(spacing: 12) {
+            Text("\(index + 1)")
+                .font(.subheadline.monospacedDigit())
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
 
-            // Weight input
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Weight")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
-                HStack(spacing: 4) {
-                    TextField("0", text: Binding(
-                        get: { set.weight == 0 && !weightFocused ? "" : String(format: "%.0f", set.weight) },
-                        set: { set.weight = Double($0) ?? 0 }
-                    ))
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.center)
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .frame(width: 56)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemGray5))
-                    .cornerRadius(8)
-                    .focused($weightFocused)
+            TextField("0", value: $set.weight, format: .number)
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.center)
+                .padding(.vertical, 6)
+                .frame(width: 70)
+                .background(Color(.tertiarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                    Text("lbs")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
+            Text("lb ×")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
-            // Reps input
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Reps")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
-                TextField("0", text: Binding(
-                    get: { set.reps == 0 && !repsFocused ? "" : String(set.reps) },
-                    set: { set.reps = Int($0) ?? 0 }
-                ))
+            TextField("0", value: $set.reps, format: .number)
                 .keyboardType(.numberPad)
                 .multilineTextAlignment(.center)
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .frame(width: 48)
-                .padding(.vertical, 8)
-                .background(Color(.systemGray5))
-                .cornerRadius(8)
-                .focused($repsFocused)
-            }
+                .padding(.vertical, 6)
+                .frame(width: 50)
+                .background(Color(.tertiarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
             Spacer()
 
-            // Complete button
             Button {
-                if set.completed {
-                    set.completed = false
-                    set.timestamp = nil
+                let wasCompleted = set.completed
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                    set.completed.toggle()
+                }
+                if wasCompleted {
+                    Haptics.tap()
                 } else {
+                    Haptics.confirm()
                     onComplete()
                 }
             } label: {
                 Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 28))
-                    .foregroundColor(set.completed ? .green : Color(.systemGray3))
+                    .font(.title2)
+                    .foregroundStyle(set.completed ? AnyShapeStyle(Theme.success) : AnyShapeStyle(.secondary))
+                    .symbolEffect(.bounce, value: set.completed)
             }
             .buttonStyle(.plain)
         }
-        .padding(12)
-        .background(set.completed ? Color.green.opacity(0.06) : Color(.tertiarySystemGroupedBackground))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(set.completed ? Color.green.opacity(0.2) : Color.clear, lineWidth: 1.5)
-        )
+        .listRowBackground(set.completed ? Color.green.opacity(0.08) : nil)
     }
 }
 
-// MARK: - Rest Timer Banner
-struct RestTimerBannerView: View {
-    @Binding var timeRemaining: Int
-    @Binding var isActive: Bool
-    let onStart: (Int) -> Void
-    let onStop: () -> Void
+// MARK: - Workout Complete
 
-    private let presets = [60, 90, 120, 180]
+struct WorkoutCompleteView: View {
+    let workout: Workout
+    @Environment(\.dismiss) private var dismiss
+    @State private var celebrate = false
 
     var body: some View {
-        if isActive {
-            activeTimerView
-        } else {
-            timerPresetsView
-        }
-    }
+        VStack(spacing: 26) {
+            Spacer()
 
-    private var activeTimerView: some View {
-        HStack(spacing: 14) {
             ZStack {
                 Circle()
-                    .stroke(Color.orange.opacity(0.2), lineWidth: 3)
-                    .frame(width: 44, height: 44)
-                Circle()
-                    .trim(from: 0, to: CGFloat(timeRemaining) / 180.0)
-                    .stroke(Color.orange, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .frame(width: 44, height: 44)
-                    .rotationEffect(.degrees(-90))
-                Image(systemName: "timer")
-                    .font(.system(size: 16))
-                    .foregroundColor(.orange)
+                    .fill(Color.green.opacity(0.12))
+                    .frame(width: 150, height: 150)
+                    .scaleEffect(celebrate ? 1 : 0.4)
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 74))
+                    .foregroundStyle(Theme.success)
+                    .scaleEffect(celebrate ? 1 : 0.3)
+                    .rotationEffect(.degrees(celebrate ? 0 : -25))
+                    .symbolEffect(.bounce, value: celebrate)
+                    .shadow(color: .green.opacity(0.35), radius: 14, x: 0, y: 6)
             }
 
-            Text(formatTime(timeRemaining))
-                .font(.system(size: 32, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundColor(timeRemaining <= 10 ? .red : .primary)
+            VStack(spacing: 4) {
+                Text("Workout Complete")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                Text(workout.name)
+                    .foregroundStyle(.secondary)
+            }
+            .opacity(celebrate ? 1 : 0)
+            .offset(y: celebrate ? 0 : 12)
+
+            HStack(spacing: 12) {
+                stat(value: workout.duration.shortDuration, label: "Duration",
+                     icon: "clock.fill", colors: Theme.trainingColors)
+                stat(value: "\(workout.completedSetCount)", label: "Sets",
+                     icon: "checklist", colors: Theme.successColors)
+                stat(value: Int(workout.totalVolume).formatted(), label: "Volume (lb)",
+                     icon: "scalemass.fill", colors: Theme.weightColors)
+            }
+            .padding(.horizontal, 20)
+            .opacity(celebrate ? 1 : 0)
+            .offset(y: celebrate ? 0 : 16)
 
             Spacer()
 
             Button {
-                timeRemaining += 30
+                dismiss()
             } label: {
-                Text("+30s")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.blue)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.blue.opacity(0.12))
-                    .cornerRadius(8)
+                GradientButtonLabel(title: "Done", systemImage: "checkmark",
+                                    colors: Theme.successColors)
             }
-
-            Button {
-                onStop()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.secondary)
-                    .padding(10)
-                    .background(Color(.systemGray5))
-                    .clipShape(Circle())
+            .buttonStyle(.pressable)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 12)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .onAppear {
+            Haptics.success()
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.65).delay(0.1)) {
+                celebrate = true
             }
         }
-        .padding(14)
-        .background(Color.orange.opacity(0.08))
-        .cornerRadius(14)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.orange.opacity(0.2), lineWidth: 1)
-        )
     }
 
-    private var timerPresetsView: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "timer")
-                .font(.system(size: 14))
-                .foregroundColor(.secondary)
-
-            Text("Rest")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
-            Spacer()
-
-            ForEach(presets, id: \.self) { seconds in
-                Button {
-                    onStart(seconds)
-                } label: {
-                    Text(formatTimeShort(seconds))
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.primary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color(.systemGray5))
-                        .cornerRadius(8)
-                }
-            }
+    private func stat(value: String, label: String, icon: String, colors: [Color]) -> some View {
+        VStack(spacing: 7) {
+            GradientIcon(systemName: icon, colors: colors, size: 34)
+            Text(value)
+                .font(.headline.monospacedDigit())
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .padding(12)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
         .background(Color(.secondarySystemGroupedBackground))
-        .cornerRadius(12)
-    }
-
-    private func formatTime(_ seconds: Int) -> String {
-        let mins = seconds / 60
-        let secs = seconds % 60
-        return String(format: "%d:%02d", mins, secs)
-    }
-
-    private func formatTimeShort(_ seconds: Int) -> String {
-        if seconds >= 60 {
-            let mins = seconds / 60
-            let secs = seconds % 60
-            return secs == 0 ? "\(mins)m" : "\(mins):\(String(format: "%02d", secs))"
-        }
-        return "\(seconds)s"
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
