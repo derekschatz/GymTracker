@@ -8,6 +8,7 @@ final class AppStore: ObservableObject {
     static let shared = AppStore()
 
     @Published private(set) var workouts: [Workout] = []          // newest first
+    @Published private(set) var cardioEntries: [CardioEntry] = [] // newest first
     @Published private(set) var routines: [Routine] = []
     @Published private(set) var exercises: [Exercise] = []
     @Published private(set) var foods: [Food] = []
@@ -79,6 +80,7 @@ final class AppStore: ObservableObject {
         static let profile = "profile.json"
         static let coachMessages = "coach-messages.json"
         static let dailyBrief = "daily-brief.json"
+        static let cardio = "cardio.json"
     }
 
     private init() {
@@ -94,6 +96,7 @@ final class AppStore: ObservableObject {
         profile = load(UserProfile.self, from: FileName.profile)
         coachMessages = load([CoachMessage].self, from: FileName.coachMessages) ?? []
         dailyBrief = load(CoachBrief.self, from: FileName.dailyBrief)
+        cardioEntries = load([CardioEntry].self, from: FileName.cardio) ?? []
 
         migrateLegacyDataIfNeeded()
         seedExercisesIfNeeded()
@@ -194,6 +197,23 @@ final class AppStore: ObservableObject {
         return points
     }
 
+    // MARK: - Cardio
+
+    func logCardio(_ entry: CardioEntry) {
+        cardioEntries.insert(entry, at: 0)
+        cardioEntries.sort { $0.date > $1.date }
+        save(cardioEntries, as: FileName.cardio)
+    }
+
+    func deleteCardio(_ entry: CardioEntry) {
+        cardioEntries.removeAll { $0.id == entry.id }
+        save(cardioEntries, as: FileName.cardio)
+    }
+
+    func cardioEntries(on date: Date) -> [CardioEntry] {
+        cardioEntries.filter { Calendar.current.isDate($0.date, inSameDayAs: date) }
+    }
+
     // MARK: - Routines
 
     func addRoutine(_ routine: Routine) {
@@ -292,6 +312,19 @@ final class AppStore: ObservableObject {
 
     func deleteFoodEntry(_ entry: FoodEntry) {
         foodEntries.removeAll { $0.id == entry.id }
+        save(foodEntries, as: FileName.foodEntries)
+    }
+
+    /// Re-logs a whole meal from another day — for the "same breakfast
+    /// every day" reality.
+    func copyMeal(_ meal: Meal, from sourceDate: Date, to targetDate: Date) {
+        let source = foodEntries(on: sourceDate, meal: meal)
+        guard !source.isEmpty else { return }
+        for entry in source {
+            foodEntries.append(
+                FoodEntry(date: targetDate, meal: meal, food: entry.food, servings: entry.servings)
+            )
+        }
         save(foodEntries, as: FileName.foodEntries)
     }
 
@@ -407,6 +440,19 @@ final class AppStore: ObservableObject {
             lines.append("TRAINING: last workout \(daysAgo == 0 ? "today" : "\(daysAgo) days ago"); \(week) workouts in last 7 days, \(month) in last 28 days")
         } else {
             lines.append("TRAINING: no workouts logged yet")
+        }
+
+        // Cardio
+        let cardioWeek = cardioEntries.filter { $0.date > calendar.date(byAdding: .day, value: -7, to: Date()) ?? Date() }
+        if cardioWeek.isEmpty {
+            lines.append("CARDIO LAST 7 DAYS: none logged")
+        } else {
+            let minutes = Int(cardioWeek.reduce(0) { $0 + $1.duration } / 60)
+            let sessions = cardioWeek
+                .prefix(4)
+                .map { "\($0.activity.title) \($0.summary)" }
+                .joined(separator: ", ")
+            lines.append("CARDIO LAST 7 DAYS: \(cardioWeek.count) sessions, \(minutes) min total — \(sessions)")
         }
 
         if activeWorkout != nil {

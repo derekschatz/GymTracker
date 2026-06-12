@@ -7,11 +7,13 @@ struct WorkoutView: View {
     @State private var editingRoutine: Routine?
     @State private var showNewRoutine = false
     @State private var routineToDelete: Routine?
+    @State private var showLogCardio = false
 
     var body: some View {
         NavigationStack {
             List {
                 startSection
+                cardioSection
                 routinesSection
                 historySection
 
@@ -26,6 +28,9 @@ struct WorkoutView: View {
             .navigationTitle("Workout")
             .sheet(isPresented: $showNewRoutine) {
                 RoutineEditorView(routine: Routine(name: ""), isNew: true)
+            }
+            .sheet(isPresented: $showLogCardio) {
+                LogCardioSheet()
             }
             .sheet(item: $editingRoutine) { routine in
                 RoutineEditorView(routine: routine, isNew: false)
@@ -72,6 +77,47 @@ struct WorkoutView: View {
         }
         .listRowBackground(Color.clear)
         .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+    }
+
+    // MARK: - Cardio
+
+    private var cardioSection: some View {
+        Section {
+            Button {
+                showLogCardio = true
+            } label: {
+                Label {
+                    Text("Log Cardio")
+                        .fontWeight(.medium)
+                } icon: {
+                    Image(systemName: "figure.run")
+                        .foregroundStyle(Theme.gradient([.pink, .orange]))
+                }
+            }
+
+            ForEach(store.cardioEntries.prefix(3)) { entry in
+                CardioRow(entry: entry)
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            store.deleteCardio(entry)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+            }
+
+            if store.cardioEntries.count > 3 {
+                NavigationLink {
+                    CardioHistoryView()
+                } label: {
+                    Text("All Cardio (\(store.cardioEntries.count))")
+                        .font(.subheadline)
+                        .foregroundStyle(.pink)
+                }
+            }
+        } header: {
+            Text("Cardio")
+        }
     }
 
     // MARK: - Routines

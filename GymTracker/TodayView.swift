@@ -8,6 +8,7 @@ struct TodayView: View {
     @State private var showLogWeight = false
     @State private var appeared = false
     @State private var briefLoading = false
+    @State private var showLogCardio = false
 
     var body: some View {
         NavigationStack {
@@ -50,6 +51,9 @@ struct TodayView: View {
             .sheet(isPresented: $showLogWeight) {
                 LogWeightSheet()
                     .presentationDetents([.height(280)])
+            }
+            .sheet(isPresented: $showLogCardio) {
+                LogCardioSheet()
             }
             .onAppear {
                 withAnimation(.spring(response: 1.0, dampingFraction: 0.85).delay(0.15)) {
@@ -285,6 +289,28 @@ struct TodayView: View {
                 }
                 .buttonStyle(.pressable)
             }
+
+            let todaysCardio = store.cardioEntries(on: Date())
+            ForEach(todaysCardio) { entry in
+                HStack(spacing: 10) {
+                    GradientIcon(systemName: entry.activity.icon, colors: [.pink, .orange], size: 26)
+                    Text(entry.activity.title)
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Text(entry.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Button {
+                showLogCardio = true
+            } label: {
+                Label("Log Cardio", systemImage: "figure.run")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.pink)
+            }
+            .buttonStyle(.plain)
         }
         .card()
     }

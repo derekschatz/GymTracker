@@ -258,6 +258,66 @@ final class CoachEngine {
         return text
     }
 
+    // MARK: - Food Estimation
+
+    /// Plain-language food logging: "2 eggs, toast with butter, coffee" →
+    /// one Food with realistic calorie/macro estimates. Structured output
+    /// guarantees parseable JSON.
+    @MainActor
+    func estimateFood(_ description: String) async throws -> Food {
+        guard let key = Keychain.load(Self.apiKeyKeychainKey), !key.isEmpty else {
+            throw CoachError.missingKey
+        }
+
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "name": ["type": "string", "description": "Short title for what was eaten, e.g. 'Eggs, Toast & Coffee'"],
+                "serving": ["type": "string", "description": "The portion as described, e.g. '2 eggs + 1 slice toast'"],
+                "calories": ["type": "number"],
+                "protein": ["type": "number", "description": "grams"],
+                "carbs": ["type": "number", "description": "grams"],
+                "fat": ["type": "number", "description": "grams"]
+            ],
+            "required": ["name", "serving", "calories", "protein", "carbs", "fat"],
+            "additionalProperties": false
+        ]
+
+        let body: [String: Any] = [
+            "model": briefModel,
+            "max_tokens": 500,
+            "system": "You estimate nutrition for food described in plain language. Use realistic typical portions (US) when amounts are vague, and sum everything described into one total. Round calories to the nearest 10 and macros to the nearest gram.",
+            "output_config": ["format": ["type": "json_schema", "schema": schema]],
+            "messages": [
+                ["role": "user", "content": description]
+            ]
+        ]
+
+        let response = try await request(body: body, key: key)
+
+        if response["stop_reason"] as? String == "refusal" {
+            throw CoachError.refused
+        }
+
+        let content = response["content"] as? [[String: Any]] ?? []
+        guard let text = content.first(where: { $0["type"] as? String == "text" })?["text"] as? String,
+              let data = text.data(using: .utf8),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let name = json["name"] as? String
+        else {
+            throw CoachError.network
+        }
+
+        return Food(
+            name: name,
+            serving: json["serving"] as? String ?? "1 serving",
+            calories: (json["calories"] as? NSNumber)?.doubleValue ?? 0,
+            protein: (json["protein"] as? NSNumber)?.doubleValue ?? 0,
+            carbs: (json["carbs"] as? NSNumber)?.doubleValue ?? 0,
+            fat: (json["fat"] as? NSNumber)?.doubleValue ?? 0
+        )
+    }
+
     // MARK: - Tool Execution
 
     private struct ToolOutcome {

@@ -210,6 +210,76 @@ struct Goals: Codable, Equatable {
     var protein: Double = 150
 }
 
+// MARK: - Cardio
+
+enum CardioActivity: String, Codable, CaseIterable, Identifiable {
+    case run, walk, cycle, swim, row, elliptical, stairs, hike, sport, other
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .run: return "Run"
+        case .walk: return "Walk"
+        case .cycle: return "Cycle"
+        case .swim: return "Swim"
+        case .row: return "Row"
+        case .elliptical: return "Elliptical"
+        case .stairs: return "Stairs"
+        case .hike: return "Hike"
+        case .sport: return "Sport"
+        case .other: return "Other"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .run: return "figure.run"
+        case .walk: return "figure.walk"
+        case .cycle: return "figure.outdoor.cycle"
+        case .swim: return "figure.pool.swim"
+        case .row: return "figure.rower"
+        case .elliptical: return "figure.elliptical"
+        case .stairs: return "figure.stair.stepper"
+        case .hike: return "figure.hiking"
+        case .sport: return "sportscourt.fill"
+        case .other: return "heart.fill"
+        }
+    }
+
+    var supportsDistance: Bool {
+        switch self {
+        case .run, .walk, .cycle, .swim, .row, .hike: return true
+        default: return false
+        }
+    }
+}
+
+struct CardioEntry: Identifiable, Codable, Hashable {
+    let id: UUID
+    var activity: CardioActivity
+    var date: Date
+    var duration: TimeInterval
+    var distance: Double? // miles
+
+    init(id: UUID = UUID(), activity: CardioActivity, date: Date = Date(),
+         duration: TimeInterval, distance: Double? = nil) {
+        self.id = id
+        self.activity = activity
+        self.date = date
+        self.duration = duration
+        self.distance = distance
+    }
+
+    var summary: String {
+        var parts = [duration.shortDuration]
+        if let distance, distance > 0 {
+            parts.append("\(distance.clean) mi")
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
 // MARK: - Formatting Helpers
 
 extension Double {

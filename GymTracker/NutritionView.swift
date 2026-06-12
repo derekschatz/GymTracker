@@ -181,6 +181,22 @@ struct NutritionView: View {
                     .font(.subheadline)
                     .fontWeight(.medium)
             }
+
+            // Same breakfast as yesterday? One tap.
+            if entries.isEmpty, let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate),
+               !store.foodEntries(on: yesterday, meal: meal).isEmpty {
+                Button {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        store.copyMeal(meal, from: yesterday, to: selectedDate)
+                    }
+                    Haptics.success()
+                } label: {
+                    Label("Same as yesterday", systemImage: "arrow.uturn.left.circle.fill")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                }
+            }
         } header: {
             HStack(spacing: 8) {
                 GradientIcon(systemName: meal.icon, colors: meal.colors, size: 24)

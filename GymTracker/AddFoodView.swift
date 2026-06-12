@@ -11,6 +11,10 @@ struct AddFoodView: View {
 
     @State private var searchText = ""
     @State private var showNewFood = false
+    @State private var describeText = ""
+    @State private var isEstimating = false
+    @State private var estimateError: String?
+    @State private var justAddedFoodId: UUID?
 
     private var filteredFoods: [Food] {
         guard !searchText.isEmpty else { return store.foods }
@@ -20,6 +24,10 @@ struct AddFoodView: View {
     var body: some View {
         NavigationStack {
             List {
+                if CoachEngine.shared.hasAPIKey && searchText.isEmpty {
+                    describeSection
+                }
+
                 if searchText.isEmpty {
                     let recents = store.recentFoods()
                     if !recents.isEmpty {
@@ -70,6 +78,65 @@ struct AddFoodView: View {
         }
     }
 
+    // MARK: - Describe It (AI estimate)
+
+    private var describeSection: some View {
+        Section {
+            HStack(spacing: 10) {
+                TextField("e.g. 2 eggs, toast with butter, coffee", text: $describeText, axis: .vertical)
+                    .lineLimit(1...3)
+                    .disabled(isEstimating)
+
+                Button {
+                    estimateAndLog()
+                } label: {
+                    if isEstimating {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(
+                                describeText.trimmingCharacters(in: .whitespaces).isEmpty
+                                    ? AnyShapeStyle(.tertiary)
+                                    : AnyShapeStyle(Theme.gradient([.purple, .indigo]))
+                            )
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(isEstimating || describeText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            if let estimateError {
+                Text(estimateError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        } header: {
+            Label("Describe it", systemImage: "sparkles")
+        } footer: {
+            Text("Say what you ate in plain words — your coach estimates the calories and macros and logs it.")
+        }
+    }
+
+    private func estimateAndLog() {
+        let description = describeText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !description.isEmpty, !isEstimating else { return }
+
+        isEstimating = true
+        estimateError = nil
+        Task {
+            do {
+                let food = try await CoachEngine.shared.estimateFood(description)
+                store.logFood(food, servings: 1, meal: meal, date: date)
+                Haptics.success()
+                dismiss()
+            } catch {
+                estimateError = error.localizedDescription
+            }
+            isEstimating = false
+        }
+    }
+
     private var emptyLibrary: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("No foods yet")
@@ -87,7 +154,7 @@ struct AddFoodView: View {
                 dismiss()
             }
         } label: {
-            HStack {
+            HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(food.name)
                     Text(food.serving)
@@ -98,6 +165,31 @@ struct AddFoodView: View {
                 Text("\(food.calories.clean) cal")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+
+                // One tap = one serving logged; the sheet stays open so a
+                // whole meal takes seconds.
+                Button {
+                    quickAdd(food)
+                } label: {
+                    Image(systemName: justAddedFoodId == food.id ? "checkmark.circle.fill" : "plus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(justAddedFoodId == food.id ? AnyShapeStyle(.green) : AnyShapeStyle(Theme.nutrition))
+                        .symbolEffect(.bounce, value: justAddedFoodId == food.id)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    private func quickAdd(_ food: Food) {
+        store.logFood(food, servings: 1, meal: meal, date: date)
+        Haptics.confirm()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            justAddedFoodId = food.id
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            if justAddedFoodId == food.id {
+                justAddedFoodId = nil
             }
         }
     }

@@ -53,9 +53,12 @@ Your fitness portfolio at a glance:
 
 ### Nutrition
 - Daily log organized by meal (breakfast, lunch, dinner, snacks)
+- **Describe it**: type "2 eggs, toast with butter, coffee" and the coach
+  estimates calories and macros and logs it as one entry
+- **One-tap quick-add** on every food row — log a whole meal in seconds
+- **Same as yesterday**: empty meals offer a one-tap copy of yesterday's
 - Create custom foods (name, serving, calories, macros) — saved to your
-  library forever
-- Recents surface what you actually eat for one-tap logging
+  library forever; recents surface what you actually eat
 - Flip back through previous days with the date arrows
 
 ### Workout
@@ -64,6 +67,8 @@ Your fitness portfolio at a glance:
   time you did the exercise
 - Built-in rest timer (synced to the watch)
 - Save any finished workout as a routine
+- **Cardio quick-log**: activity → minutes → optional distance, in ten
+  seconds — synced to Apple Health with the right activity type
 - Exercise library with custom exercises and progress charts
 - Full workout history
 
